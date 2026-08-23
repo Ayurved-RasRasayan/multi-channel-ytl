@@ -624,6 +624,51 @@ function sanitizeFilename(text) {
         .substring(0, 200);              // Limit length for filesystem safety
 }
 
+/**
+ * ⭐ NEW: Get default output directory path using OS user's home directory
+ * Uses os.userInfo().homedir for cross-platform support
+ * - Windows: C:\Users\{username}\Downloads\{channelName}
+ * - Mac: /Users/{username}/Downloads/{channelName}
+ * - Linux: /home/{username}/Downloads/{channelName}
+ * 
+ * @param {string} channelName - Name of the channel (will be sanitized)
+ * @returns {string} Full path to default output directory
+ */
+function getDefaultOutputPath(channelName) {
+    const homedir = os.userInfo().homedir;
+    const safeChannelName = channelName ? sanitizeFilename(channelName) : 'Untitled_Channel';
+    const defaultPath = path.join(homedir, 'Downloads', safeChannelName);
+    
+    console.log('[Default Output Path] Generated:');
+    console.log('   Home Directory:', homedir);
+    console.log('   Channel Name:', safeChannelName);
+    console.log('   Full Path:', defaultPath);
+    
+    return defaultPath;
+}
+
+/**
+ * Ensure directory exists, create if it doesn't (with subdirectories)
+ * @param {string} dirPath - Directory path to ensure exists
+ * @returns {boolean} True if directory exists or was created successfully
+ */
+function ensureDirectoryExists(dirPath) {
+    try {
+        if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+            console.log('✅ [Directory] Created:', dirPath);
+            return true;
+        } else {
+            console.log('✅ [Directory] Already exists:', dirPath);
+            return true;
+        }
+    } catch (error) {
+        console.error('❌ [Directory] Failed to create:', dirPath);
+        console.error('   Error:', error.message);
+        return false;
+    }
+}
+
 // =============================================================================
 // ⭐ MULTI-CHANNEL SUPPORT - Helper Functions
 // =============================================================================
@@ -880,6 +925,9 @@ class MultiChannelDownloadManager {
             args.push(videoUrl);
             
             console.log(`[MultiChannel DownloadManager] Executing: yt-dlp ${args.join(' ').substring(0, 150)}...`);
+            
+            // ⭐ ENSURE OUTPUT DIRECTORY EXISTS BEFORE DOWNLOAD
+            ensureDirectoryExists(outputDir);
             
             const process = spawn('yt-dlp', args, {
                 stdio: ['pipe', 'pipe', 'pipe'],
@@ -2158,6 +2206,29 @@ app.post('/api/download', async (req, res) => {
     }
 });
 
+// ⭐ NEW: GET /api/default-output-dir - Return default output directory for frontend
+// Allows frontend to show placeholder text in "Add Channel" modal
+app.get('/api/default-output-dir', (req, res) => {
+    console.log('\n[Default Output] GET /api/default-output-dir requested');
+    
+    const channelName = req.query.channelName || '[Channel Name]';
+    const defaultPath = getDefaultOutputPath(channelName);
+    
+    console.log('[Default Output] Returning default path:', defaultPath);
+    
+    res.json({
+        success: true,
+        path: defaultPath,
+        homeDirectory: os.userInfo().homedir,
+        osPlatform: process.platform,
+        username: os.userInfo().username,
+        example: {
+            channelName: 'ExampleChannel',
+            path: getDefaultOutputPath('ExampleChannel')
+        }
+    });
+});
+
 // GET /api/channels - Return list of saved channels (FRONTEND COMPATIBLE FORMAT!)
 app.get('/api/channels', (req, res) => {
     console.log('\n[Channels] GET /api/channels requested');
@@ -2257,7 +2328,7 @@ app.post('/api/channels', async (req, res) => {
             status: 'active',
             
             // ⭐ NEW MULTI-CHANNEL FIELDS:
-            outputDir: path.join(process.cwd(), 'downloads', sanitizeFilename(channelName)),
+            outputDir: getDefaultOutputPath(channelName),  // Uses os.userInfo().homedir/Downloads/[channelName]
             color: getRandomChannelColor(), // Visual identification color for UI
             settings: {
                 quality: 'best',
@@ -3345,6 +3416,9 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
         args.push(videoUrl);
 
         console.log(`[Execute Download] Command: yt-dlp ${args.join(' ').substring(0, 200)}...`);
+
+        // ⭐ ENSURE OUTPUT DIRECTORY EXISTS BEFORE DOWNLOAD
+        ensureDirectoryExists(outputDir);
 
         const ytDlpProcess = spawn('yt-dlp', args, {
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -4931,6 +5005,7 @@ app.listen(PORT, () => {
     console.log(`║  🍪 Cookies:    ${isCookiesFileValid() ? '✅ Valid' : '⚠️ Using browser'}                              ║`);
     console.log('║  🔐 Auth:       ✅ Enabled (Session-based)                        ║');
     console.log('║  🌐 Multi-Ch:   ✅ Enabled (Multi-channel support)               ║');
+    console.log(`║  📂 Default Dir: ${getDefaultOutputPath('[Channel]')}  ║`);
     console.log('║                                                              ║');
     console.log('╠══════════════════════════════════════════════════════════════╣');
     console.log('║  Available API Endpoints:                                   ║');
@@ -4952,6 +5027,7 @@ app.listen(PORT, () => {
     console.log('║  GET    /api/scheduler/status   ⭐ Auto-sync scheduler status     ║');
     console.log('║  GET    /api/files              List all downloaded files        ║');
     console.log('║  GET    /api/download-file/:id  Download file by ID            ║');
+    console.log('║  GET    /api/default-output-dir ⭐ Default output directory     ║');
     console.log('╚══════════════════════════════════════════════════════════════╝');
     console.log('');
     console.log('⭐ FEATURES ENABLED:');
