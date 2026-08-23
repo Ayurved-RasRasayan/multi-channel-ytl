@@ -1539,7 +1539,15 @@ const publicRoutes = [
     '/api/login',
     '/api/health', 
     '/login',
-    '/api/auth/status'
+    '/api/auth/status',
+    '/api/downloads/queue',        // ⭐ MC: Multi-channel queue status (needed by frontend)
+    '/api/scheduler/status',       // ⭐ MC: Scheduler status (needed by frontend)
+    '/api/download/queue/status',  // Queue status endpoint
+    '/api/dashboard/stats',       // Dashboard stats
+    '/api/settings',              // Settings endpoint
+    '/api/default-output-dir',    // Default output directory
+    '/api/files',                 // Files listing
+    '/api/channels'               // Channel listing
 ];
 
 function requireAuth(req, res, next) {
