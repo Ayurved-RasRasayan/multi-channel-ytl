@@ -21,20 +21,6 @@ const {
 
 logger.info('Server', '🚀 Server starting with enhanced logging enabled');
 // =============================================================================
-
-// =============================================================================
-// ⭐ DEBUGGING & LOGGING SYSTEM - Auto-added for download debugging
-// =============================================================================
-const { 
-    logger, 
-    createRequestLogger, 
-    addLogEndpoints,
-    spawnYtDlpWithLogging,
-    diagnoseDownloadError
-} = require('../backend-logging-enhancement');
-
-logger.info('Server', '🚀 Server starting with enhanced logging enabled');
-// =============================================================================
 // =============================================================================
 // AUTHENTICATION & SECURITY MODULES
 // =============================================================================
@@ -253,6 +239,9 @@ function isCookiesFileValid() {
         console.log('[isCookiesFileValid] Actual:', fields.length, 'fields');
         
         if (fields.length < 7) {
+            console.log('[isCookiesFileValid] ❌ FAIL: Invalid Netscape format');
+            console.log('[isCookiesFileValid] Expected 7 tab-separated fields, got:', fields.length);
+            fields.forEach((field, i) => {
                 console.log(`   Field ${i}: [${field.substring(0, 50)}]`);
             });
             return false;
@@ -362,18 +351,20 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
                 stderr.includes('DPAPI') ||
                 stderr.includes('decrypt');
             
-            if (isCookieError && currentIndex  l.trim().startsWith('ERROR:'));
-                    if (firstLine) {
-                        console.log('[executeWithRetry] Error hint:', firstLine.trim());
-                    }
+            if (isCookieError && currentIndex < strategies.length - 1) {
+                // Log error hint from stderr
+                const errorLines = stderr.split('\n');
+                const firstLine = errorLines.find(l => l.trim().startsWith('ERROR:'));
+                if (firstLine) {
+                    console.log('[executeWithRetry] Error hint:', firstLine.trim());
                 }
-                
-                // Try next strategy
-                executeWithRetry(strategies, currentIndex + 1, onSuccess, onError);
-                return;
             }
             
-            // Non-cookie error or last strategy - fail completely
+            // Try next strategy
+            executeWithRetry(strategies, currentIndex + 1, onSuccess, onError);
+            return;
+            
+            // Non-cookie error or last strategy - fail completely (unreachable but kept for structure)
             console.log('[executeWithRetry] ❌ All strategies exhausted or non-recoverable error');
             if (stderr) {
                 console.log('[executeWithRetry] Final error (first 500 chars):', stderr.substring(0, 500));
@@ -607,7 +598,10 @@ function getUniqueFilename(directory, originalFilename) {
  * @returns {string} Formatted duration like "21m-26s" or "" if not available
  */
 function formatDurationForDisplay(seconds) {
-    if (!seconds || seconds  0 && remainingSeconds > 0) {
+    if (!seconds || seconds <= 0) return '';
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.round(seconds % 60);
+    if (minutes > 0 && remainingSeconds > 0) {
         return `${minutes}m-${remainingSeconds}s`;
     } else if (minutes > 0) {
         return `${minutes}m`;
@@ -833,7 +827,7 @@ class MultiChannelDownloadManager {
             return;
         }
         
-        while (this.activeDownloads.size  0) {
+        while (this.activeDownloads.size < this.maxConcurrent && this.queue.length > 0) {
             const nextItem = this.queue.shift();
             if (nextItem) {
                 this.startDownload(nextItem.channelId, nextItem.videoId, nextItem.id, nextItem.title);
@@ -1971,7 +1965,39 @@ function fetchChannelInfo(channelId, channelUrl) {
                             };
                             
                             // Improved duration filtering
-                            // - Filter out shorts (= 60 && rawDuration  {
+                            // - Filter out shorts (< 60 seconds) if option enabled
+                            // - Filter out very long streams (> 12 hours) unless it's a live stream
+                            if (rawDuration !== null) {
+                                // Add to appropriate list based on duration/type
+                                if (rawDuration < 60 && !video.isLiveStream) {
+                                    videos.push(video);
+                                } else if (rawDuration > 43200 && !video.isLiveStream) {
+                                    console.log(`[fetchChannelInfo] Skipping very long video: ${videoTitle} (${rawDuration}s)`);
+                                } else {
+                                    videos.push(video);
+                                }
+                            } else {
+                                videos.push(video);
+                            }
+                        } catch (parseError) {
+                            console.error(`[fetchChannelInfo] Error parsing line ${index}:`, parseError.message);
+                        }
+                    });
+                    
+                    console.log(`[fetchChannelInfo] ✅ Parsed ${videos.length} unique videos (${liveVideos.length} live)`);
+                    
+                    resolve({
+                        videos,
+                        liveVideos,
+                        total: videos.length + liveVideos.length
+                    });
+                    
+                } catch (error) {
+                    console.error('[fetchChannelInfo] Error processing channel data:', error);
+                    reject(error);
+                }
+            },
+            (error) => {
                 console.error('[fetchChannelInfo] Failed to fetch channel:', error.message);
                 reject(error);
             }
@@ -2469,8 +2495,8 @@ app.get('/api/channels/:id/sync-status', (req, res) => {
         // 1. Start from ACTUAL files on disk
         // 2. Match videos to files
         // 3. Track which files have been "consumed" to prevent double-counting
-        // This guarantees downloaded count  f.name.toLowerCase())
-        );
+        // This guarantees downloaded count NEVER exceeds actual file count
+        const actualFileSet = new Set(downloadedFiles.map(f => f.name.toLowerCase()));
         
         // Track which files have already been matched/consumed
         // This prevents multiple video entries from matching the same physical file
@@ -2525,8 +2551,10 @@ app.get('/api/channels/:id/sync-status', (req, res) => {
             const isDownloaded = fileExists && !consumedFiles.has(expectedFilename);
             
             // Debug logging for first few videos and all matches
-            if (index :"/\\ → -`);
-                }
+            if (index < 5 || isDownloaded) {
+                console.log(`[Sync] Checking video ${index}: ${video.title}`);
+                console.log(`[Sync]   Expected filename: ${expectedFilename}`);
+                console.log(`[Sync]   Sanitized: ${video.title.replace(/[:/\\|?*<>"]/g, '-')}`);
                 if (video.downloadFilename) {
                     console.log(`[Sync]   ⚠️ Duplicate detected - using downloadFilename with duration/counter`);
                 }
@@ -3103,7 +3131,9 @@ const downloadQueue = {
         
         console.log(`\n[Download Queue] 📊 Status: Active=${this.activeJobs.length}/${this.maxConcurrent} | Queue=${this.queue.length}`);
         
-        if (this.queue.length > 0 && this.activeJobs.length  j.downloadId === nextJob.downloadId);
+        if (this.queue.length > 0 && this.activeJobs.length < this.maxConcurrent) {
+            const nextJob = this.queue[0];
+            const alreadyRunning = this.activeJobs.find(j => j.downloadId === nextJob.downloadId);
             if (alreadyRunning) {
                 console.log(`[Download Queue] ⚠️ Next job already running, skipping: ${nextJob.videoTitle?.substring(0, 30)}...`);
                 return;
@@ -3193,9 +3223,9 @@ const downloadQueue = {
      */
     processStuckQueue() {
         // Check if we have capacity and queued jobs
-        if (this.activeJobs.length  0) {
+        if (this.activeJobs.length < this.maxConcurrent && this.queue.length > 0) {
             console.log('[Download Queue] 🔄 Safety check: Found stuck jobs, processing...');
-            while (this.activeJobs.length  0) {
+            while (this.activeJobs.length < this.maxConcurrent && this.queue.length > 0) {
                 const nextJob = this.queue.shift();
                 console.log(`[Download Queue] ▶️ Safety-starting: ${nextJob.videoTitle?.substring(0, 30)}...`);
                 this.executeJob(nextJob);
@@ -3850,7 +3880,11 @@ app.post('/api/download/batch', async (req, res) => {
         let errorCount = 0;
 
         // Process each video
-        for (let i = 0; i  r.index === i && r.videoId === videoId);
+        for (let i = 0; i < videos.length; i++) {
+            const video = videos[i];
+            const videoId = video.id;
+            
+        const resultEntry = results.find(r => r.index === i && r.videoId === videoId);
         const downloadId = resultEntry?.jobId;
         
         if (!downloadId) {
@@ -3894,7 +3928,8 @@ app.post('/api/download/batch', async (req, res) => {
         
         // ⭐ KEY: Wait 5 seconds BEFORE starting next download
         // This ensures: Download → Rename → 5s pause → Next download
-        if (i  setTimeout(resolve, 5000));  // 5 second delay
+        if (i < videos.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 5000));  // 5 second delay
         }
     }
     
@@ -3907,7 +3942,25 @@ app.post('/api/download/batch', async (req, res) => {
     
     console.log(`[Batch Sequential] Successful: ${successCount}/${videos.length}`);
     console.log(`[Batch Sequential] Failed: ${failCount}/${videos.length}`);
-}
+    
+    res.json({
+        success: true,
+        data: {
+            total: videos.length,
+            successful: successCount,
+            failed: failCount,
+            results
+        }
+    });
+        
+    } catch (error) {
+        console.error('[Batch Download] Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
 
 // =============================================================================
 // SEQUENTIAL DOWNLOAD FEATURE (One at a time - True Sequential)
@@ -4016,7 +4069,10 @@ app.post('/api/download/sequential', async (req, res) => {
 async function processSequentialQueue(outputDir, format, quality, channelId) {
     console.log('\n[Sequential Queue] 🚀 Starting sequential processing...');
     
-    while (sequentialQueue.currentIndex  setTimeout(resolve, 1000));
+    while (sequentialQueue.currentIndex < sequentialQueue.totalVideos) {
+        // Small delay between downloads
+        if (sequentialQueue.currentIndex > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
         
         if (sequentialQueue.cancelRequested) break;
@@ -4096,7 +4152,8 @@ async function processSequentialQueue(outputDir, format, quality, channelId) {
 
         // ⭐ FIX: Wait 5 seconds AFTER download + rename complete before starting next
         // This ensures: Download → Rename → 5s pause → Next download
-        if (sequentialQueue.currentIndex  setTimeout(resolve, 5000));  // 5 second delay
+        if (sequentialQueue.currentIndex < sequentialQueue.totalVideos) {
+            await new Promise(resolve => setTimeout(resolve, 5000));  // 5 second delay
         }
     }
 
