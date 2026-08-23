@@ -7,6 +7,20 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+
+// =============================================================================
+// ⭐ DEBUGGING & LOGGING SYSTEM - Auto-added for download debugging
+// =============================================================================
+const { 
+    logger, 
+    createRequestLogger, 
+    addLogEndpoints,
+    spawnYtDlpWithLogging,
+    diagnoseDownloadError
+} = require('../backend-logging-enhancement');
+
+logger.info('Server', '🚀 Server starting with enhanced logging enabled');
+// =============================================================================
 // =============================================================================
 // AUTHENTICATION & SECURITY MODULES
 // =============================================================================
@@ -224,14 +238,7 @@ function isCookiesFileValid() {
         console.log('[isCookiesFileValid] Expected: 7 tab-separated fields');
         console.log('[isCookiesFileValid] Actual:', fields.length, 'fields');
         
-        if (fields.length < 7) {
-            console.log('\n[isCookiesFileValid] ❌ INVALID FORMAT DETECTED!');
-            console.log('[isCookiesFileValid] This is why channel loading fails with cookies.txt!');
-            console.log('[isCookiesFileValid] Problem: Lines have only', fields.length, 'fields instead of 7');
-            console.log('[isCookiesFileValid] Root cause: Python extractor produced corrupted cookies');
-            console.log('[isCookiesFileValid] Solution: Server will fall back to browser cookies automatically');
-            console.log('\n[isCookiesFileValid] Field breakdown of first line:');
-            fields.forEach((field, i) => {
+        if (fields.length  {
                 console.log(`   Field ${i}: [${field.substring(0, 50)}]`);
             });
             return false;
@@ -341,12 +348,7 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
                 stderr.includes('DPAPI') ||
                 stderr.includes('decrypt');
             
-            if (isCookieError && currentIndex < strategies.length - 1) {
-                console.log('[executeWithRetry] 🔄 Cookie-related error detected, trying next strategy...');
-                
-                // Show partial stderr (not full traceback)
-                if (stderr) {
-                    const firstLine = stderr.split('\n').find(l => l.trim().startsWith('ERROR:'));
+            if (isCookieError && currentIndex  l.trim().startsWith('ERROR:'));
                     if (firstLine) {
                         console.log('[executeWithRetry] Error hint:', firstLine.trim());
                     }
@@ -591,15 +593,7 @@ function getUniqueFilename(directory, originalFilename) {
  * @returns {string} Formatted duration like "21m-26s" or "" if not available
  */
 function formatDurationForDisplay(seconds) {
-    if (!seconds || seconds <= 0) {
-        return '';
-    }
-    
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.round(seconds % 60);
-    
-    // Format: 21m-26s
-    if (minutes > 0 && remainingSeconds > 0) {
+    if (!seconds || seconds  0 && remainingSeconds > 0) {
         return `${minutes}m-${remainingSeconds}s`;
     } else if (minutes > 0) {
         return `${minutes}m`;
@@ -825,7 +819,7 @@ class MultiChannelDownloadManager {
             return;
         }
         
-        while (this.activeDownloads.size < this.maxConcurrent && this.queue.length > 0) {
+        while (this.activeDownloads.size  0) {
             const nextItem = this.queue.shift();
             if (nextItem) {
                 this.startDownload(nextItem.channelId, nextItem.videoId, nextItem.id, nextItem.title);
@@ -1468,6 +1462,19 @@ console.log('╚═════════════════════�
 
 const app = express();
 app.use(cors());
+
+
+// =============================================================================
+// ⭐ ACTIVATE LOGGING MIDDLEWARE & ENDPOINTS
+// =============================================================================
+// Request logging (must be BEFORE routes)
+app.use(createRequestLogger(logger));
+
+// Log viewing API endpoints
+addLogEndpoints(app, logger);
+
+logger.info('Server', '✅ Logging endpoints activated: /api/logs, /api/test-download');
+// =============================================================================
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -1937,39 +1944,7 @@ function fetchChannelInfo(channelId, channelUrl) {
                             };
                             
                             // Improved duration filtering
-                            // - Filter out shorts (< 60 seconds)
-                            // - Filter out invalid durations (0, negative, NaN)
-                            // - Keep videos with null duration (some valid videos don't report duration in flat playlist)
-                            const isValidDuration = rawDuration === null || 
-                                                  (!isNaN(rawDuration) && rawDuration >= 60 && rawDuration < 86400); // Max 24 hours
-                            
-                            if (isValidDuration) {
-                                videos.push(video);
-                            } else {
-                                console.log(`[fetchChannelInfo] Filtered out short/invalid duration video: ${videoTitle} (${rawDuration}s)`);
-                            }
-                        } catch (parseError) {
-                            console.warn(`[fetchChannelInfo] Failed to parse line ${index}:`, parseError.message.substring(0, 100));
-                            // Continue with next line instead of failing completely
-                        }
-                    });
-                    
-                    console.log(`[fetchChannelInfo] ✅ Parsed ${videos.length} unique videos (from ${lines.length} raw lines)`);
-                    
-                    // Process duplicate titles - append duration to duplicates
-                    const processedVideos = processDuplicateTitles(videos);
-                    
-                    resolve({
-                        videos: processedVideos,  // Return processed videos with displayTitle/downloadFilename
-                        liveVideos: liveVideos
-                    });
-                    
-                } catch (parseError) {
-                    console.error('[fetchChannelInfo] Error parsing output:', parseError);
-                    reject(new Error('Failed to parse channel data'));
-                }
-            },
-            (error) => {
+                            // - Filter out shorts (= 60 && rawDuration  {
                 console.error('[fetchChannelInfo] Failed to fetch channel:', error.message);
                 reject(error);
             }
@@ -2467,12 +2442,7 @@ app.get('/api/channels/:id/sync-status', (req, res) => {
         // 1. Start from ACTUAL files on disk
         // 2. Match videos to files
         // 3. Track which files have been "consumed" to prevent double-counting
-        // This guarantees downloaded count <= actual file count
-        
-        // Create a Set of actual filenames (with .mp4 extension) for O(1) lookup
-        // Use lowercase for case-insensitive comparison
-        const actualFileSet = new Set(
-            downloadedFiles.map(f => f.name.toLowerCase())
+        // This guarantees downloaded count  f.name.toLowerCase())
         );
         
         // Track which files have already been matched/consumed
@@ -2513,7 +2483,7 @@ app.get('/api/channels/:id/sync-status', (req, res) => {
             } else {
                 // ─── UNIQUE TITLE PATH ───
                 // Use sanitizedTitle which only replaces illegal Windows characters:
-                //   | ? * < > : " / \  →  -
+                //   | ? *  : " / \  →  -
                 // No duration suffix needed since title is unique
                 
                 const sanitizedBase = video.sanitizedTitle || sanitizeFilename(videoTitle);
@@ -2528,13 +2498,7 @@ app.get('/api/channels/:id/sync-status', (req, res) => {
             const isDownloaded = fileExists && !consumedFiles.has(expectedFilename);
             
             // Debug logging for first few videos and all matches
-            if (index < 5 || (fileExists && index < 20)) {
-                console.log(`[Sync] Video ${index}: "${videoTitle}"`);
-                console.log(`[Sync]   → Strategy: ${matchingStrategy}`);
-                console.log(`[Sync]   → Raw (display):    "${videoTitle}.mp4"`);
-                console.log(`[Sync]   → Expected match:   "${expectedFilename}"`);
-                if (videoTitle !== (video.sanitizedTitle || videoTitle)) {
-                    console.log(`[Sync]   ⭐ Sanitized! Illegal chars replaced: |?*<>:"/\\ → -`);
+            if (index :"/\\ → -`);
                 }
                 if (video.downloadFilename) {
                     console.log(`[Sync]   ⚠️ Duplicate detected - using downloadFilename with duration/counter`);
@@ -3061,44 +3025,7 @@ const downloadQueue = {
     
     /**
      * Add a download job to the queue
-     * If < 2 active, start immediately
-     * Otherwise, wait in queue
-     */
-    enqueue(downloadId, videoUrl, outputPath, videoTitle) {
-        const job = { 
-            downloadId, 
-            videoUrl, 
-            outputPath, 
-            videoTitle,
-            startedAt: null  // Track when job actually starts
-        };
-        
-        console.log(`\n[Download Queue] 📥 Job added: ${videoTitle?.substring(0, 30)}...`);
-        console.log(`[Download Queue] Active: ${this.activeJobs.length}/${this.maxConcurrent} | Queue: ${this.queue.length}`);
-        
-        if (this.activeJobs.length < this.maxConcurrent) {
-            // Slot available - start immediately!
-            console.log(`[Download Queue] ▶️ Starting immediately (slot ${this.activeJobs.length + 1}/${this.maxConcurrent})`);
-            this.executeJob(job);
-        } else {
-            // No slot - add to queue AND set status to 'queued'
-            this.queue.push(job);
-            console.log(`[Download Queue] ⏳ Queued at position #${this.queue.length} (waiting for slot)`);
-            
-            // ⭐ KEY FIX: Mark as 'queued' in downloadManager (not 'downloading'!)
-            downloadManager.update(downloadId, { status: 'queued' });
-        }
-    },
-    
-    /**
-     * Execute a single download job
-     * ⭐ FIX: Add to activeJobs when starting, remove on complete
-     */
-    executeJob(job) {
-        const { downloadId, videoUrl, outputPath, videoTitle } = job;
-        
-        // ⭐ BULLETPROOF: Check if job already executing (prevent 30x execution bug!)
-        const alreadyActive = this.activeJobs.find(j => j.downloadId === downloadId);
+     * If  j.downloadId === downloadId);
         if (alreadyActive) {
             console.log(`[Download Queue] ⚠️ DUPLICATE EXECUTION BLOCKED: ${videoTitle?.substring(0, 30)}... (already active)`);
             return; // Don't execute twice!
@@ -3149,18 +3076,7 @@ const downloadQueue = {
         
         console.log(`\n[Download Queue] 📊 Status: Active=${this.activeJobs.length}/${this.maxConcurrent} | Queue=${this.queue.length}`);
         
-        if (this.queue.length > 0 && this.activeJobs.length < this.maxConcurrent) {
-            // Get next job from queue
-            const nextJob = this.queue.shift();
-            
-            // ⭐ BULLETPROOF: Validate nextJob exists and hasn't been executed
-            if (!nextJob) {
-                console.log('[Download Queue] ⚠️ Next job is null, skipping');
-                return;
-            }
-            
-            // Check if next job is already active (prevent re-execution)
-            const alreadyRunning = this.activeJobs.find(j => j.downloadId === nextJob.downloadId);
+        if (this.queue.length > 0 && this.activeJobs.length  j.downloadId === nextJob.downloadId);
             if (alreadyRunning) {
                 console.log(`[Download Queue] ⚠️ Next job already running, skipping: ${nextJob.videoTitle?.substring(0, 30)}...`);
                 return;
@@ -3250,9 +3166,9 @@ const downloadQueue = {
      */
     processStuckQueue() {
         // Check if we have capacity and queued jobs
-        if (this.activeJobs.length < this.maxConcurrent && this.queue.length > 0) {
+        if (this.activeJobs.length  0) {
             console.log('[Download Queue] 🔄 Safety check: Found stuck jobs, processing...');
-            while (this.activeJobs.length < this.maxConcurrent && this.queue.length > 0) {
+            while (this.activeJobs.length  0) {
                 const nextJob = this.queue.shift();
                 console.log(`[Download Queue] ▶️ Safety-starting: ${nextJob.videoTitle?.substring(0, 30)}...`);
                 this.executeJob(nextJob);
@@ -3907,118 +3823,7 @@ app.post('/api/download/batch', async (req, res) => {
         let errorCount = 0;
 
         // Process each video
-        for (let i = 0; i < videos.length; i++) {
-            const video = videos[i];
-            const videoId = video.id || video.videoId;
-            const videoTitle = video.title || `Video ${i + 1}`;
-            const videoUrl = video.url || `https://www.youtube.com/watch?v=${videoId}`;
-
-            console.log(`\n[Batch Download] Processing [${i + 1}/${videos.length}]: ${videoTitle.substring(0, 50)}...`);
-
-            // Create download job
-            const downloadId = uuidv4();
-            const safeTitle = videoTitle.replace(/[^a-zA-Z0-9._-]/g, '_').substring(0, 100);
-            let outputFilename = `${safeTitle}_${downloadId}.mp4`;
-            
-            // ⭐ MODIFICATION 3: Apply duplicate filename handler for batch downloads
-            outputFilename = getUniqueFilename(outputDir, outputFilename);
-            
-            const outputPath = path.join(outputDir, outputFilename);
-
-            // Add to download manager
-            const download = downloadManager.add({
-                id: downloadId,
-                url: videoUrl,
-                videoId: videoId,
-                channelId: channelId,
-                title: videoTitle,
-                filename: outputFilename,
-                outputPath: outputPath,
-                format: format || 'best',
-                quality: quality || 'lowest',
-                status: 'queued',
-                progress: 0,
-                createdAt: new Date().toISOString()
-            });
-
-            queuedCount++;
-            results.push({
-                index: i,
-                videoId: videoId,
-                title: videoTitle,
-                status: 'queued',
-                jobId: downloadId,
-                filename: outputFilename
-            });
-        }
-
-        // ⭐ NOTE: Downloads will be processed sequentially by processBatchSequentially()
-
-        console.log(`\n[Batch Download] ✅ Batch processing complete:`);
-        console.log(`   Queued: ${queuedCount}`);
-        console.log(`   Skipped (already exist): ${skippedCount}`);
-        console.log(`   Errors: ${errorCount}`);
-        console.log(`   ⭐ Mode: Sequential (download → rename → 5s delay → next)`);
-
-        res.json({
-            success: true,
-            message: `Batch download initiated: ${queuedCount} videos will download sequentially (5s between each)`,
-            summary: {
-                total: videos.length,
-                queued: queuedCount,
-                skipped: skippedCount,
-                errors: errorCount,
-                mode: 'sequential'  // ⭐ NEW: Indicate sequential mode
-            },
-            results: results,
-            batchId: uuidv4()
-        });
-
-        // ⭐ FIX: Process downloads SEQUENTIALLY (not parallel with setTimeout)
-        // Video 1: Download → Rename complete → Wait 5s → Video 2: Download → ...
-        processBatchSequentially(videos, results, outputDir, format, quality, channelId);
-
-    } catch (error) {
-        console.error('[Batch Download] ❌ Error:', error.message);
-        res.status(500).json({
-            success: false,
-            error: 'Batch download failed: ' + error.message
-        });
-    }
-});
-
-// =============================================================================
-// ⭐ BATCH SEQUENTIAL PROCESSOR - Processes batch downloads one at a time
-// =============================================================================
-
-/**
- * Process batch downloads sequentially (not in parallel)
- * Flow: Video 1 Download → Video 1 Rename → Wait 5s → Video 2 Download → ...
- * 
- * @param {Array} videos - Array of video objects
- * @param {Array} results - Results array to update
- * @param {string} outputDir - Output directory
- * @param {string} format - Video format
- * @param {string} quality - Video quality  
- * @param {string} channelId - Channel ID (optional)
- */
-async function processBatchSequentially(videos, results, outputDir, format, quality, channelId) {
-    console.log('\n' + '='.repeat(80));
-    console.log('📦 [Batch Sequential] Starting SEQUENTIAL batch processing...');
-    console.log(`[Batch Sequential] Total videos: ${videos.length}`);
-    console.log(`[Batch Sequential] Mode: One at a time with 5s delay between each`);
-    console.log('='.repeat(80));
-    
-    for (let i = 0; i < videos.length; i++) {
-        const video = videos[i];
-        const videoId = video.id || video.videoId;
-        const videoTitle = video.title || `Video ${i + 1}`;
-        const videoUrl = video.url || `https://www.youtube.com/watch?v=${videoId}`;
-        
-        console.log(`\n[Batch Sequential] 📥 [${i + 1}/${videos.length}]: ${videoTitle.substring(0, 50)}...`);
-        
-        // Find the download job we created earlier
-        const resultEntry = results.find(r => r.index === i && r.videoId === videoId);
+        for (let i = 0; i  r.index === i && r.videoId === videoId);
         const downloadId = resultEntry?.jobId;
         
         if (!downloadId) {
@@ -4062,9 +3867,7 @@ async function processBatchSequentially(videos, results, outputDir, format, qual
         
         // ⭐ KEY: Wait 5 seconds BEFORE starting next download
         // This ensures: Download → Rename → 5s pause → Next download
-        if (i < videos.length - 1) {
-            console.log(`\n[Batch Sequential] ⏳ Download & rename complete! Waiting 5 seconds before next video...`);
-            await new Promise(resolve => setTimeout(resolve, 5000));  // 5 second delay
+        if (i  setTimeout(resolve, 5000));  // 5 second delay
         }
     }
     
@@ -4186,17 +3989,7 @@ app.post('/api/download/sequential', async (req, res) => {
 async function processSequentialQueue(outputDir, format, quality, channelId) {
     console.log('\n[Sequential Queue] 🚀 Starting sequential processing...');
     
-    while (sequentialQueue.currentIndex < sequentialQueue.totalVideos) {
-        // Check for cancellation
-        if (sequentialQueue.cancelRequested) {
-            console.log('[Sequential Queue] ⛔ Cancellation requested, stopping...');
-            break;
-        }
-
-        // Check for pause
-        while (sequentialQueue.isPaused && !sequentialQueue.cancelRequested) {
-            console.log('[Sequential Queue] ⏸️ Paused, waiting...');
-            await new Promise(resolve => setTimeout(resolve, 1000));
+    while (sequentialQueue.currentIndex  setTimeout(resolve, 1000));
         }
         
         if (sequentialQueue.cancelRequested) break;
@@ -4276,9 +4069,7 @@ async function processSequentialQueue(outputDir, format, quality, channelId) {
 
         // ⭐ FIX: Wait 5 seconds AFTER download + rename complete before starting next
         // This ensures: Download → Rename → 5s pause → Next download
-        if (sequentialQueue.currentIndex < sequentialQueue.totalVideos) {
-            console.log('[Sequential Queue] ⏳ Download + rename complete! Waiting 5 seconds before next download...');
-            await new Promise(resolve => setTimeout(resolve, 5000));  // 5 second delay
+        if (sequentialQueue.currentIndex  setTimeout(resolve, 5000));  // 5 second delay
         }
     }
 
