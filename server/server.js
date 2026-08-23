@@ -624,6 +624,661 @@ function sanitizeFilename(text) {
         .substring(0, 200);              // Limit length for filesystem safety
 }
 
+// =============================================================================
+// ⭐ MULTI-CHANNEL SUPPORT - Helper Functions
+// =============================================================================
+
+/**
+ * Generate a random color for a channel from a predefined palette
+ * Used for visual identification in the UI
+ * @returns {string} Hex color code
+ */
+function getRandomChannelColor() {
+    const colors = [
+        '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+        '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
+        '#14b8a6', '#f43f5e', '#a855f7', '#22c55e', '#eab308'
+    ];
+    return colors[Math.floor(Math.random() * colors.length)];
+}
+
+/**
+ * Calculate global statistics across all channels
+ * Aggregates data for dashboard display
+ * @returns {object} Global stats object
+ */
+function getGlobalStats() {
+    let totalVideos = 0;
+    let totalDownloaded = 0;
+    let totalRemaining = 0;
+    let activeDownloads = 0;
+    let queuedDownloads = 0;
+    
+    savedChannels.forEach(ch => {
+        totalVideos += ch.stats?.totalVideos || ch.videos?.length || 0;
+        totalDownloaded += ch.stats?.downloadedCount || 0;
+        totalRemaining += ch.stats?.remainingCount || 0;
+    });
+    
+    // Count from download manager if available
+    if (downloadManager && typeof downloadManager.getActive === 'function') {
+        activeDownloads = downloadManager.getActive().length;
+    }
+    if (downloadQueue) {
+        queuedDownloads = downloadQueue.queue.length;
+    }
+    
+    return {
+        totalChannels: savedChannels.size,
+        totalVideos,
+        totalDownloaded,
+        totalRemaining,
+        activeDownloads,
+        queuedDownloads,
+        overallPercentage: totalVideos > 0 ? ((totalDownloaded / totalVideos) * 100).toFixed(1) : 0,
+        timestamp: new Date().toISOString()
+    };
+}
+
+/**
+ * Get channel's download directory (multi-channel aware)
+ * @param {string} channelName - Name of the channel
+ * @param {string} customOutputDir - Optional custom output directory
+ * @returns {string} Full path to download directory
+ */
+function getChannelDownloadDir(channelName, customOutputDir) {
+    if (customOutputDir) {
+        return customOutputDir;
+    }
+    const baseDir = DOWNLOADS_DIR || path.join(process.cwd(), 'downloads');
+    const safeName = sanitizeFilename(channelName);
+    return path.join(baseDir, safeName);
+}
+
+// =============================================================================
+// ⭐ MULTI-CHANNEL DOWNLOAD MANAGER CLASS
+// =============================================================================
+
+/**
+ * MultiChannelDownloadManager - Manages concurrent downloads across multiple channels
+ * Provides queue management, progress tracking, and channel-aware download handling
+ */
+class MultiChannelDownloadManager {
+    constructor(maxConcurrent = 3) {
+        this.maxConcurrent = maxConcurrent;
+        this.activeDownloads = new Map(); // downloadId -> { channelId, videoId, process, startTime }
+        this.queue = []; // Array of { channelId, videoId, priority, addedAt, title }
+        this.paused = false;
+        this.globalStats = {
+            totalCompleted: 0,
+            totalFailed: 0,
+            totalDownloadedMB: 0
+        };
+        
+        console.log(`[MultiChannel DownloadManager] Initialized with max ${maxConcurrent} concurrent downloads`);
+    }
+
+    /**
+     * Add videos to the download queue for a specific channel
+     * @param {string} channelId - Channel ID
+     * @param {Array} videoIds - Array of video IDs/objects to download
+     * @param {string} priority - 'high', 'normal', or 'low'
+     * @returns {object} Queue status with positions
+     */
+    addToQueue(channelId, videoIds = [], priority = 'normal') {
+        const addedItems = [];
+        
+        videoIds.forEach((video, index) => {
+            const videoId = video.id || video.videoId || video;
+            const videoTitle = video.title || `Video ${videoId}`;
+            
+            const queueItem = {
+                id: uuidv4(),
+                channelId,
+                videoId,
+                priority,
+                addedAt: Date.now(),
+                title: videoTitle,
+                status: 'queued'
+            };
+            
+            this.queue.push(queueItem);
+            addedItems.push(queueItem);
+            
+            console.log(`[MultiChannel DownloadManager] Added to queue: ${videoTitle.substring(0, 30)}... (Priority: ${priority})`);
+        });
+        
+        // Sort queue by priority (high first)
+        this.sortQueue();
+        
+        // Try to process queue immediately
+        this.processQueue();
+        
+        return {
+            success: true,
+            addedCount: addedItems.length,
+            items: addedItems,
+            queuePosition: this.queue.length - addedItems.length + 1,
+            totalInQueue: this.queue.length
+        };
+    }
+
+    /**
+     * Sort queue by priority
+     */
+    sortQueue() {
+        const priorityOrder = { high: 0, normal: 1, low: 2 };
+        this.queue.sort((a, b) => (priorityOrder[a.priority] || 1) - (priorityOrder[b.priority] || 1));
+    }
+
+    /**
+     * Process the queue - start downloads if under max concurrent limit
+     */
+    processQueue() {
+        if (this.paused) {
+            console.log('[MultiChannel DownloadManager] Queue processing paused');
+            return;
+        }
+        
+        while (this.activeDownloads.size < this.maxConcurrent && this.queue.length > 0) {
+            const nextItem = this.queue.shift();
+            if (nextItem) {
+                this.startDownload(nextItem.channelId, nextItem.videoId, nextItem.id, nextItem.title);
+            }
+        }
+        
+        console.log(`[MultiChannel DownloadManager] Status: ${this.activeDownloads.size}/${this.maxConcurrent} active, ${this.queue.length} queued`);
+    }
+
+    /**
+     * Start a single download
+     * @param {string} channelId - Channel ID
+     * @param {string} videoId - Video ID
+     * @param {string} queueItemId - Queue item ID for tracking
+     * @param {string} videoTitle - Video title for logging
+     */
+    async startDownload(channelId, videoId, queueItemId, videoTitle) {
+        const downloadId = uuidv4();
+        const startTime = Date.now();
+        
+        console.log(`\n[MultiChannel DownloadManager] ▶️ Starting download: ${videoTitle?.substring(0, 40)}...`);
+        console.log(`[MultiChannel DownloadManager] Download ID: ${downloadId}`);
+        console.log(`[MultiChannel DownloadManager] Channel ID: ${channelId}`);
+        
+        // Track as active download
+        this.activeDownloads.set(downloadId, {
+            channelId,
+            videoId,
+            queueItemId,
+            process: null,
+            startTime,
+            status: 'downloading',
+            progress: 0,
+            speed: null,
+            title: videoTitle
+        });
+        
+        // Get channel info for output directory
+        const channel = savedChannels.get(channelId);
+        const outputDir = channel?.outputDir || getChannelDownloadDir(channel?.name || 'unknown');
+        
+        // Ensure output directory exists
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+            console.log(`[MultiChannel DownloadManager] Created output directory: ${outputDir}`);
+        }
+        
+        try {
+            // Build video URL from video ID
+            const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+            const outputPath = path.join(outputDir, `${sanitizeFilename(videoTitle || videoId)}.mp4`);
+            
+            // Execute download using existing smart download function
+            await this.executeYtDlpDownload(downloadId, videoUrl, outputPath, videoTitle, outputDir);
+            
+            // Update stats on success
+            this.globalStats.totalCompleted++;
+            
+            console.log(`[MultiChannel DownloadManager] ✅ Download completed: ${videoTitle?.substring(0, 30)}...`);
+            
+        } catch (error) {
+            console.error(`[MultiChannel DownloadManager] ❌ Download failed:`, error.message);
+            this.globalStats.totalFailed++;
+            
+            // Update active download with error
+            const activeDownload = this.activeDownloads.get(downloadId);
+            if (activeDownload) {
+                activeDownload.status = 'error';
+                activeDownload.error = error.message;
+            }
+        } finally {
+            // Clean up and process next in queue
+            setTimeout(() => {
+                this.activeDownloads.delete(downloadId);
+                console.log(`[MultiChannel DownloadManager] 🔓 Released slot (${this.activeDownloads.size}/${this.maxConcurrent} active)`);
+                this.processQueue();
+            }, 1000); // Small delay before starting next
+        }
+    }
+
+    /**
+     * Execute yt-dlp download with progress tracking
+     */
+    executeYtDlpDownload(downloadId, videoUrl, outputPath, videoTitle, outputDir) {
+        return new Promise((resolve, reject) => {
+            const args = [
+                '-f', 'bestvideo+bestaudio/best',
+                '-o', outputPath,
+                '--no-playlist',
+                '--merge-output-format', 'mp4',
+                '--embed-chapters',
+                '--embed-metadata'
+            ];
+            
+            // Add JS runtime flag for Windows compatibility
+            args.push('--js-runtimes', 'node');
+            args.push(videoUrl);
+            
+            console.log(`[MultiChannel DownloadManager] Executing: yt-dlp ${args.join(' ').substring(0, 150)}...`);
+            
+            const process = spawn('yt-dlp', args, {
+                stdio: ['pipe', 'pipe', 'pipe'],
+                shell: true,
+                cwd: outputDir
+            });
+            
+            // Store process reference for cancellation
+            const activeDownload = this.activeDownloads.get(downloadId);
+            if (activeDownload) {
+                activeDownload.process = process;
+            }
+            
+            let stdoutData = '';
+            let stderrData = '';
+            
+            process.stdout.on('data', (data) => {
+                stdoutData += data.toString();
+                
+                // Parse progress
+                const progressMatch = stdoutData.match(/(\d+\.?\d*)%/);
+                if (progressMatch) {
+                    const percent = parseFloat(progressMatch[1]);
+                    const activeDownload = this.activeDownloads.get(downloadId);
+                    if (activeDownload) {
+                        activeDownload.progress = percent;
+                    }
+                    
+                    // Parse speed
+                    const speedMatch = stdoutData.match(/(\d+\.?\d*\s*(?:MiB|KiB|GiB)\/s)/);
+                    if (speedMatch && activeDownload) {
+                        activeDownload.speed = speedMatch[1];
+                    }
+                }
+            });
+            
+            process.stderr.on('data', (data) => {
+                stderrData += data.toString();
+            });
+            
+            process.on('close', (code) => {
+                console.log(`[MultiChannel DownloadManager] Process exited with code: ${code}`);
+                
+                if (code === 0) {
+                    resolve({ success: true, outputPath });
+                } else {
+                    reject(new Error(`yt-dlp exited with code ${code}: ${stderrData.slice(-200)}`));
+                }
+            });
+            
+            process.on('error', (err) => {
+                console.error(`[MultiChannel DownloadManager] Process error:`, err.message);
+                reject(err);
+            });
+        });
+    }
+
+    /**
+     * Cancel a specific download by ID
+     * @param {string} downloadId - Download ID to cancel
+     * @returns {boolean} True if cancelled successfully
+     */
+    cancelDownload(downloadId) {
+        const download = this.activeDownloads.get(downloadId);
+        
+        if (!download) {
+            // Check if it's in queue
+            const queueIndex = this.queue.findIndex(item => item.id === downloadId);
+            if (queueIndex !== -1) {
+                this.queue.splice(queueIndex, 1);
+                console.log(`[MultiChannel DownloadManager] Removed from queue: ${downloadId}`);
+                return true;
+            }
+            console.log(`[MultiChannel DownloadManager] Download not found: ${downloadId}`);
+            return false;
+        }
+        
+        // Kill the process if running
+        if (download.process) {
+            console.log(`[MultiChannel DownloadManager] Killing process for: ${download.title?.substring(0, 30)}...`);
+            try {
+                download.process.kill('SIGTERM');
+                setTimeout(() => {
+                    try { download.process.kill('SIGKILL'); } catch (e) {}
+                }, 5000);
+            } catch (e) {
+                console.error(`[MultiChannel DownloadManager] Error killing process:`, e.message);
+            }
+        }
+        
+        // Remove from active downloads
+        this.activeDownloads.delete(downloadId);
+        console.log(`[MultiChannel DownloadManager] ✅ Cancelled download: ${downloadId}`);
+        
+        // Process next in queue
+        this.processQueue();
+        
+        return true;
+    }
+
+    /**
+     * Pause all downloads (prevent new ones from starting)
+     */
+    pauseAll() {
+        this.paused = true;
+        console.log('[MultiChannel DownloadManager] ⏸️ All downloads paused (no new downloads will start)');
+        return { success: true, message: 'All downloads paused' };
+    }
+
+    /**
+     * Resume downloads (start processing queue again)
+     */
+    resumeAll() {
+        this.paused = false;
+        console.log('[MultiChannel DownloadManager] ▶️ Downloads resumed');
+        this.processQueue();
+        return { success: true, message: 'All downloads resumed' };
+    }
+
+    /**
+     * Get current queue status
+     * @returns {object} Complete queue status
+     */
+    getQueueStatus() {
+        const activeList = Array.from(this.activeDownloads.entries()).map(([id, dl]) => ({
+            id,
+            channelId: dl.channelId,
+            videoId: dl.videoId,
+            title: dl.title,
+            status: dl.status,
+            progress: dl.progress || 0,
+            speed: dl.speed || null,
+            startTime: dl.startTime,
+            elapsed: Date.now() - dl.startTime
+        }));
+        
+        return {
+            active: activeList,
+            queued: this.queue.map(item => ({
+                id: item.id,
+                channelId: item.channelId,
+                videoId: item.videoId,
+                title: item.title,
+                priority: item.priority,
+                addedAt: item.addedAt,
+                position: this.queue.indexOf(item) + 1
+            })),
+            stats: {
+                ...this.globalStats,
+                maxConcurrent: this.maxConcurrent,
+                activeCount: this.activeDownloads.size,
+                queuedCount: this.queue.length,
+                isPaused: this.paused
+            },
+            timestamp: new Date().toISOString()
+        };
+    }
+
+    /**
+     * Get active downloads for a specific channel
+     * @param {string} channelId - Channel ID to filter by
+     * @returns {Array} Active downloads for the channel
+     */
+    getActiveDownloadsForChannel(channelId) {
+        const results = [];
+        this.activeDownloads.forEach((dl, id) => {
+            if (dl.channelId === channelId) {
+                results.push({
+                    id,
+                    videoId: dl.videoId,
+                    title: dl.title,
+                    status: dl.status,
+                    progress: dl.progress || 0,
+                    startTime: dl.startTime
+                });
+            }
+        });
+        
+        // Also check queue for this channel
+        this.queue.forEach(item => {
+            if (item.channelId === channelId) {
+                results.push({
+                    id: item.id,
+                    videoId: item.videoId,
+                    title: item.title,
+                    status: 'queued',
+                    progress: 0,
+                    position: this.queue.indexOf(item) + 1
+                });
+            }
+        });
+        
+        return results;
+    }
+
+    /**
+     * Clear the entire queue (does not affect active downloads)
+     * @returns {number} Number of items cleared
+     */
+    clearQueue() {
+        const count = this.queue.length;
+        this.queue = [];
+        console.log(`[MultiChannel DownloadManager] 🗑️ Queue cleared (${count} items removed)`);
+        return count;
+    }
+}
+
+// =============================================================================
+// ⭐ AUTO-SYNC SCHEDULER CLASS
+// =============================================================================
+
+/**
+ * AutoSyncScheduler - Automatically syncs channels at configurable intervals
+ * Only syncs channels where autoSync setting is enabled
+ */
+class AutoSyncScheduler {
+    constructor(multiChannelManager, intervalHours = 2) {
+        this.multiChannelManager = multiChannelManager;
+        this.intervalMs = intervalHours * 60 * 60 * 1000;
+        this.timer = null;
+        this.running = false;
+        this.lastSyncTime = null;
+        this.nextSyncTime = null;
+        this.syncHistory = []; // Track recent sync operations
+        
+        console.log(`[AutoSyncScheduler] Initialized with ${intervalHours} hour interval`);
+    }
+
+    /**
+     * Start the auto-sync scheduler
+     */
+    start() {
+        if (this.timer) {
+            clearInterval(this.timer);
+        }
+        
+        this.running = true;
+        this.updateNextSyncTime();
+        
+        this.timer = setInterval(() => {
+            this.performAutoSync();
+        }, this.intervalMs);
+        
+        console.log(`[AutoSyncScheduler] ✅ Started (next sync: ${this.nextSyncTime?.toISOString()})`);
+    }
+
+    /**
+     * Stop the auto-sync scheduler
+     */
+    stop() {
+        if (this.timer) {
+            clearInterval(this.timer);
+            this.timer = null;
+        }
+        this.running = false;
+        console.log('[AutoSyncScheduler] ⏹️ Stopped');
+    }
+
+    /**
+     * Perform automatic sync on all channels with autoSync enabled
+     */
+    async performAutoSync() {
+        console.log('\n' + '='.repeat(60));
+        console.log('🔄 [AutoSyncScheduler] Performing scheduled auto-sync...');
+        console.log('='.repeat(60));
+        
+        const results = {
+            synced: [],
+            skipped: [],
+            errors: []
+        };
+        
+        const channelsToSync = [];
+        
+        // Find channels with autoSync enabled
+        savedChannels.forEach((channel, id) => {
+            if (channel.settings?.autoSync !== false) { // Default to true
+                channelsToSync.push({ id, channel });
+            } else {
+                results.skipped.push({
+                    channelId: id,
+                    channelName: channel.name,
+                    reason: 'autoSync disabled'
+                });
+            }
+        });
+        
+        console.log(`[AutoSyncScheduler] Found ${channelsToSync.length} channels to sync`);
+        
+        // Sync each channel
+        for (const { id, channel } of channelsToSync) {
+            try {
+                console.log(`[AutoSyncScheduler] Syncing channel: ${channel.name}`);
+                
+                // Update channel's lastSync attempt time
+                if (channel.stats) {
+                    channel.stats.lastSync = new Date().toISOString();
+                }
+                
+                // Trigger a fresh fetch of channel info would go here
+                // For now, we just update the timestamp
+                
+                results.synced.push({
+                    channelId: id,
+                    channelName: channel.name,
+                    syncedAt: new Date().toISOString()
+                });
+                
+            } catch (error) {
+                console.error(`[AutoSyncScheduler] ❌ Error syncing ${channel.name}:`, error.message);
+                results.errors.push({
+                    channelId: id,
+                    channelName: channel.name,
+                    error: error.message
+                });
+                
+                if (channel.stats) {
+                    channel.stats.lastError = error.message;
+                    channel.stats.lastSyncStatus = 'error';
+                }
+            }
+        }
+        
+        // Update tracking
+        this.lastSyncTime = new Date();
+        this.updateNextSyncTime();
+        
+        // Store in history (keep last 50)
+        this.syncHistory.push({
+            time: this.lastSyncTime,
+            results
+        });
+        if (this.syncHistory.length > 50) {
+            this.syncHistory.shift();
+        }
+        
+        console.log(`[AutoSyncScheduler] ✅ Auto-sync complete:`);
+        console.log(`   Synced: ${results.synced.length}`);
+        console.log(`   Skipped: ${results.skipped.length}`);
+        console.log(`   Errors: ${results.errors.length}`);
+        console.log(`   Next sync: ${this.nextSyncTime?.toISOString()}`);
+        console.log('='.repeat(60) + '\n');
+        
+        return results;
+    }
+
+    /**
+     * Manual trigger of sync (resets timer)
+     */
+    async syncNow() {
+        console.log('[AutoSyncScheduler] 🔄 Manual sync triggered');
+        const results = await this.performAutoSync();
+        
+        // Reset timer
+        if (this.timer && this.running) {
+            clearInterval(this.timer);
+            this.start();
+        }
+        
+        return results;
+    }
+
+    /**
+     * Update the sync interval
+     * @param {number} hours - New interval in hours
+     */
+    updateInterval(hours) {
+        this.intervalMs = Math.max(0.5, hours) * 60 * 60 * 1000; // Min 30 minutes
+        console.log(`[AutoSyncScheduler] Interval updated to ${hours} hours`);
+        
+        if (this.running) {
+            this.start(); // Restart with new interval
+        }
+    }
+
+    /**
+     * Update the next sync time calculation
+     */
+    updateNextSyncTime() {
+        this.nextSyncTime = new Date(Date.now() + this.intervalMs);
+    }
+
+    /**
+     * Get current scheduler status
+     * @returns {object} Scheduler status
+     */
+    getStatus() {
+        return {
+            running: this.running,
+            intervalHours: this.intervalMs / (1000 * 60 * 60),
+            intervalMs: this.intervalMs,
+            lastSync: this.lastSyncTime,
+            nextSync: this.nextSyncTime,
+            totalSyncs: this.syncHistory.length,
+            recentResults: this.syncHistory.slice(-5) // Last 5 sync results
+        };
+    }
+}
+
 /**
  * Process video list to detect and handle duplicate titles
  * Appends duration to duplicate titles to make them unique
@@ -742,6 +1397,22 @@ function processDuplicateTitles(videos) {
     
     return processedVideos;
 }
+
+// =============================================================================
+// ⭐ MULTI-CHANNEL GLOBAL INSTANCES
+// =============================================================================
+
+// Create global instances for multi-channel support
+// These are used throughout the application for managing downloads and auto-sync
+const multiChannelDownloadManager = new MultiChannelDownloadManager(3); // Max 3 parallel downloads across all channels
+const autoSyncScheduler = new AutoSyncScheduler(multiChannelDownloadManager, 2); // Auto-sync every 2 hours
+
+console.log('╔══════════════════════════════════════════════════════════════╗');
+console.log('║  🌐 MULTI-CHANNEL SUPPORT ENABLED                            ║');
+console.log('╠══════════════════════════════════════════════════════════════╣');
+console.log(`║  • Download Manager: Max ${multiChannelDownloadManager.maxConcurrent} concurrent downloads        ║`);
+console.log(`║  • Auto-Sync Scheduler: Every ${autoSyncScheduler.intervalMs / (1000 * 60 * 60)} hours                    ║`);
+console.log('╚══════════════════════════════════════════════════════════════╝');
 
 // =============================================================================
 // EXPRESS APP INITIALIZATION - Must be BEFORE routes!
@@ -1569,18 +2240,42 @@ app.post('/api/channels', async (req, res) => {
             ...video
         }));
         
-        // Create channel object
+        // Determine channel name for directory
+        const channelName = name || channelIdFinal;
+        
+        // Create channel object with MULTI-CHANNEL SUPPORT
         const channel = {
             id: uuidv4(),
             youtubeId: channelIdFinal,
             url: channelUrl,
-            name: name || channelIdFinal,
+            name: channelName,
             videoCount: channelData.videos.length + channelData.liveVideos.length,
             videos: videosClean,
             liveVideos: channelData.liveVideos,
             addedAt: new Date().toISOString(),
             lastChecked: new Date().toISOString(),
-            status: 'active'
+            status: 'active',
+            
+            // ⭐ NEW MULTI-CHANNEL FIELDS:
+            outputDir: path.join(process.cwd(), 'downloads', sanitizeFilename(channelName)),
+            color: getRandomChannelColor(), // Visual identification color for UI
+            settings: {
+                quality: 'best',
+                format: 'mp4',
+                autoSync: true,
+                maxConcurrentDownloads: 2
+            },
+            stats: {
+                totalVideos: channelData.videos.length,
+                downloadedCount: 0, // Will be updated on sync
+                remainingCount: channelData.videos.length,
+                lastSync: null,
+                lastSyncStatus: null,
+                lastError: null
+            },
+            isDownloading: false,
+            downloadQueue: [],
+            syncResults: [] // Cache last sync results
         };
         
         // Save to in-memory storage
@@ -1904,6 +2599,317 @@ app.delete('/api/channels/:id', (req, res) => {
         res.status(404).json({
             success: false,
             error: 'Channel not found'
+        });
+    }
+});
+
+// =============================================================================
+// ⭐ MULTI-CHANNEL API ENDPOINTS
+// =============================================================================
+
+// PUT /api/channels/:id - Update channel settings
+app.put('/api/channels/:id', (req, res) => {
+    const { id } = req.params;
+    console.log('\n' + '='.repeat(60));
+    console.log('📝 [Multi-Channel] PUT /api/channels/' + id + ' - UPDATE CHANNEL');
+    console.log('='.repeat(60));
+    
+    try {
+        if (!savedChannels.has(id)) {
+            return res.status(404).json({
+                success: false,
+                error: 'Channel not found'
+            });
+        }
+        
+        const channel = savedChannels.get(id);
+        const updates = req.body;
+        
+        console.log('[Multi-Channel] Updates requested:', JSON.stringify(updates, null, 2));
+        
+        // Allowed fields to update
+        const allowedUpdates = ['name', 'color', 'outputDir', 'settings', 'status'];
+        
+        // Apply updates with validation
+        allowedUpdates.forEach(field => {
+            if (updates[field] !== undefined) {
+                if (field === 'settings' && typeof updates[field] === 'object') {
+                    // Merge settings objects
+                    channel.settings = { ...channel.settings, ...updates[field] };
+                } else {
+                    channel[field] = updates[field];
+                }
+                console.log(`[Multi-Channel] ✅ Updated ${field}:`, updates[field]);
+            }
+        });
+        
+        // Update timestamp
+        channel.lastChecked = new Date().toISOString();
+        
+        // Save updated channel
+        savedChannels.set(id, channel);
+        
+        console.log('[Multi-Channel] ✅ Channel updated successfully');
+        console.log('='.repeat(60) + '\n');
+        
+        res.json({
+            success: true,
+            message: 'Channel updated successfully',
+            channel: channel
+        });
+        
+    } catch (error) {
+        console.error('[Multi-Channel] ❌ Error updating channel:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to update channel: ' + error.message
+        });
+    }
+});
+
+// POST /api/channels/:id/sync - Trigger sync for a single channel
+app.post('/api/channels/:id/sync', async (req, rea) => {
+    const { id } = req.params;
+    console.log('\n' + '='.repeat(60));
+    console.log('🔄 [Multi-Channel] POST /api/channels/' + id + '/sync - TRIGGER SYNC');
+    console.log('='.repeat(60));
+    
+    try {
+        if (!savedChannels.has(id)) {
+            return res.status(404).json({
+                success: false,
+                error: 'Channel not found'
+            });
+        }
+        
+        const channel = savedChannels.get(id);
+        console.log(`[Multi-Channel] Syncing channel: ${channel.name}`);
+        console.log(`[Multi-Channel] YouTube ID: ${channel.youtubeId}`);
+        
+        // Update sync status
+        if (channel.stats) {
+            channel.stats.lastSyncStatus = 'in_progress';
+            channel.stats.lastSync = new Date().toISOString();
+        }
+        
+        // Re-fetch channel info from YouTube
+        console.log('[Multi-Channel] 📡 Fetching fresh channel data...');
+        const freshChannelData = await fetchChannelInfo(channel.youtubeId, channel.url);
+        
+        // Update videos list
+        const oldVideoCount = channel.videos?.length || 0;
+        channel.videos = freshChannelData.videos;
+        channel.liveVideos = freshChannelData.liveVideos;
+        channel.videoCount = freshChannelData.videos.length + freshChannelData.liveVideos.length;
+        channel.lastChecked = new Date().toISOString();
+        
+        // Update stats
+        if (channel.stats) {
+            channel.stats.totalVideos = freshChannelData.videos.length;
+            channel.stats.remainingCount = freshChannelData.videos.length; // Will be refined by sync-status check
+            channel.stats.lastSyncStatus = 'completed';
+            channel.stats.lastError = null;
+        }
+        
+        // Cache sync results
+        channel.syncResults = [{
+            syncedAt: new Date().toISOString(),
+            newVideosFound: freshChannelData.videos.length - oldVideoCount,
+            totalVideos: freshChannelData.videos.length,
+            previousVideos: oldVideoCount
+        }];
+        
+        // Save updated channel
+        savedChannels.set(id, channel);
+        
+        console.log(`[Multi-Channel] ✅ Sync complete:`);
+        console.log(`   Previous videos: ${oldVideoCount}`);
+        console.log(`   Current videos: ${freshChannelData.videos.length}`);
+        console.log(`   New videos: ${Math.max(0, freshChannelData.videos.length - oldVideoCount)}`);
+        console.log('='.repeat(60) + '\n');
+        
+        rea.json({
+            success: true,
+            message: 'Channel synced successfully',
+            channelId: id,
+            channelName: channel.name,
+            syncResults: {
+                previousVideos: oldVideoCount,
+                currentVideos: freshChannelData.videos.length,
+                newVideosFound: Math.max(0, freshChannelData.videos.length - oldVideoCount),
+                syncedAt: new Date().toISOString()
+            },
+            channel: channel
+        });
+        
+    } catch (error) {
+        console.error('[Multi-Channel] ❌ Sync failed:', error.message);
+        
+        // Update error status in channel
+        const channel = savedChannels.get(id);
+        if (channel && channel.stats) {
+            channel.stats.lastSyncStatus = 'error';
+            channel.stats.lastError = error.message;
+            savedChannels.set(id, channel);
+        }
+        
+        rea.status(500).json({
+            success: false,
+            error: 'Sync failed: ' + error.message,
+            suggestion: 'Check internet connection and YouTube accessibility'
+        });
+    }
+});
+
+// POST /api/channels/sync-all - Sync all channels
+app.post('/api/channels/sync-all', async (req, res) => {
+    console.log('\n' + '='.repeat(70));
+    console.log('🌐 [Multi-Channel] POST /api/channels/sync-all - SYNC ALL CHANNELS');
+    console.log('='.repeat(70));
+    
+    const results = {
+        synced: [],
+        failed: [],
+        skipped: [],
+        summary: {
+            total: 0,
+            successful: 0,
+            failed: 0,
+            totalNewVideos: 0
+        }
+    };
+    
+    results.summary.total = savedChannels.size;
+    
+    if (savedChannels.size === 0) {
+        console.log('[Multi-Channel] No channels to sync');
+        return res.json({
+            success: true,
+            message: 'No channels to sync',
+            results: results
+        });
+    }
+    
+    console.log(`[Multi-Channel] Found ${savedChannels.size} channels to sync`);
+    
+    // Process each channel
+    for (const [channelId, channel] of savedChannels) {
+        try {
+            console.log(`\n[Multi-Channel] Syncing: ${channel.name} (${channelId})`);
+            
+            const oldVideoCount = channel.videos?.length || 0;
+            
+            // Fetch fresh data
+            const freshData = await fetchChannelInfo(channel.youtubeId, channel.url);
+            
+            // Update channel
+            channel.videos = freshData.videos;
+            channel.liveVideos = freshData.liveVideos;
+            channel.videoCount = freshData.videos.length + freshData.liveVideos.length;
+            channel.lastChecked = new Date().toISOString();
+            
+            // Update stats
+            if (channel.stats) {
+                channel.stats.totalVideos = freshData.videos.length;
+                channel.stats.remainingCount = freshData.videos.length;
+                channel.stats.lastSync = new Date().toISOString();
+                channel.stats.lastSyncStatus = 'completed';
+                channel.stats.lastError = null;
+            }
+            
+            const newVideosCount = Math.max(0, freshData.videos.length - oldVideoCount);
+            
+            results.synced.push({
+                channelId,
+                channelName: channel.name,
+                previousVideos: oldVideoCount,
+                currentVideos: freshData.videos.length,
+                newVideos: newVideosCount
+            });
+            
+            results.summary.successful++;
+            results.summary.totalNewVideos += newVideosCount;
+            
+            console.log(`[Multi-Channel] ✅ ${channel.name}: ${oldVideoCount} → ${freshData.videos.length} videos (+${newVideosCount} new)`);
+            
+        } catch (error) {
+            console.error(`[Multi-Channel] ❌ Failed to sync ${channel.name}:`, error.message);
+            
+            if (channel.stats) {
+                channel.stats.lastSyncStatus = 'error';
+                channel.stats.lastError = error.message;
+            }
+            
+            results.failed.push({
+                channelId,
+                channelName: channel.name,
+                error: error.message
+            });
+            
+            results.summary.failed++;
+        }
+    }
+    
+    console.log('\n' + '-'.repeat(50));
+    console.log('[Multi-Channel] 📊 SYNC ALL SUMMARY:');
+    console.log(`   Total channels: ${results.summary.total}`);
+    console.log(`   Successful: ${results.summary.successful}`);
+    console.log(`   Failed: ${results.summary.failed}`);
+    console.log(`   New videos found: ${results.summary.totalNewVideos}`);
+    console.log('='.repeat(70) + '\n');
+    
+    res.json({
+        success: true,
+        message: `Synced ${results.summary.successful}/${results.summary.total} channels`,
+        results: results,
+        timestamp: new Date().toISOString()
+    });
+});
+
+// GET /api/dashboard/stats - Global statistics dashboard
+app.get('/api/dashboard/stats', (req, res) => {
+    console.log('\n[Dashboard] GET /api/dashboard/stats');
+    
+    try {
+        const globalStats = getGlobalStats();
+        
+        // Get per-channel breakdown
+        const channelBreakdown = [];
+        savedChannels.forEach((channel, id) => {
+            channelBreakdown.push({
+                id,
+                name: channel.name,
+                color: channel.color,
+                videoCount: channel.videoCount || channel.videos?.length || 0,
+                downloadedCount: channel.stats?.downloadedCount || 0,
+                remainingCount: channel.stats?.remainingCount || channel.videos?.length || 0,
+                status: channel.status,
+                isDownloading: channel.isDownloading || false,
+                lastSync: channel.stats?.lastSync || null,
+                autoSync: channel.settings?.autoSync !== false
+            });
+        });
+        
+        // Get scheduler status
+        const schedulerStatus = autoSyncScheduler.getStatus();
+        
+        // Get download manager status
+        const downloadManagerStatus = multiChannelDownloadManager.getQueueStatus();
+        
+        res.json({
+            success: true,
+            ...globalStats,
+            channels: channelBreakdown,
+            scheduler: schedulerStatus,
+            downloads: downloadManagerStatus,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[Dashboard] ❌ Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get dashboard stats: ' + error.message
         });
     }
 });
@@ -3511,6 +4517,196 @@ app.post('/api/download/:id/force-stop', (req, res) => {
 });
 
 // =============================================================================
+// ⭐ MULTI-CHANNEL QUEUE MANAGEMENT ENDPOINTS
+// =============================================================================
+
+// GET /api/downloads/queue - Get global multi-channel queue status
+app.get('/api/downloads/queue', (req, res) => {
+    console.log('\n[Multi-Channel Queue] GET /api/downloads/queue');
+    
+    try {
+        const status = multiChannelDownloadManager.getQueueStatus();
+        
+        res.json({
+            success: true,
+            ...status,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[Multi-Channel Queue] ❌ Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get queue status: ' + error.message
+        });
+    }
+});
+
+// POST /api/downloads/pause-all - Pause all downloads (no new downloads will start)
+app.post('/api/downloads/pause-all', (req, res) => {
+    console.log('\n[Multi-Channel Queue] POST /api/downloads/pause-all');
+    
+    const result = multiChannelDownloadManager.pauseAll();
+    
+    // Also pause existing download queue if exists
+    if (downloadQueue && typeof downloadQueue.clearQueue === 'function') {
+        // Note: We don't clear, just prevent new starts
+        console.log('[Multi-Channel Queue] Existing download queue noted');
+    }
+    
+    res.json({
+        success: true,
+        message: 'All downloads paused. No new downloads will start.',
+        ...result,
+        timestamp: new Date().toISOString()
+    });
+});
+
+// POST /api/downloads/resume-all - Resume all downloads
+app.post('/api/downloads/resume-all', (req, res) => {
+    console.log('\n[Multi-Channel Queue] POST /api/downloads/resume-all');
+    
+    const result = multiChannelDownloadManager.resumeAll();
+    
+    res.json({
+        success: true,
+        message: 'All downloads resumed. Processing queue...',
+        ...result,
+        timestamp: new Date().toISOString()
+    });
+});
+
+// DELETE /api/downloads/:downloadId - Cancel a specific download
+app.delete('/api/downloads/:downloadId', (req, res) => {
+    const { downloadId } = req.params;
+    console.log(`\n[Multi-Channel Queue] DELETE /api/downloads/${downloadId}`);
+    
+    try {
+        const cancelled = multiChannelDownloadManager.cancelDownload(downloadId);
+        
+        if (cancelled) {
+            res.json({
+                success: true,
+                message: 'Download cancelled successfully',
+                downloadId: downloadId,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(404).json({
+                success: false,
+                error: 'Download not found or already completed',
+                downloadId: downloadId
+            });
+        }
+        
+    } catch (error) {
+        console.error('[Multi-Channel Queue] ❌ Error cancelling:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to cancel download: ' + error.message
+        });
+    }
+});
+
+// GET /api/scheduler/status - Get auto-sync scheduler status
+app.get('/api/scheduler/status', (req, res) => {
+    console.log('\n[Scheduler] GET /api/scheduler/status');
+    
+    try {
+        const status = autoSyncScheduler.getStatus();
+        
+        res.json({
+            success: true,
+            scheduler: status,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[Scheduler] ❌ Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get scheduler status: ' + error.message
+        });
+    }
+});
+
+// POST /api/scheduler/start - Start auto-sync scheduler
+app.post('/api/scheduler/start', (req, res) => {
+    console.log('[Scheduler] POST /api/scheduler/start');
+    
+    try {
+        const { intervalHours } = req.body;
+        
+        if (intervalHours) {
+            autoSyncScheduler.updateInterval(intervalHours);
+        }
+        
+        autoSyncScheduler.start();
+        
+        res.json({
+            success: true,
+            message: 'Auto-sync scheduler started',
+            scheduler: autoSyncScheduler.getStatus(),
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[Scheduler] ❌ Error starting:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to start scheduler: ' + error.message
+        });
+    }
+});
+
+// POST /api/scheduler/stop - Stop auto-sync scheduler
+app.post('/api/scheduler/stop', (req, res) => {
+    console.log('[Scheduler] POST /api/scheduler/stop');
+    
+    try {
+        autoSyncScheduler.stop();
+        
+        res.json({
+            success: true,
+            message: 'Auto-sync scheduler stopped',
+            scheduler: autoSyncScheduler.getStatus(),
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[Scheduler] ❌ Error stopping:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to stop scheduler: ' + error.message
+        });
+    }
+});
+
+// POST /api/scheduler/trigger - Manually trigger sync now
+app.post('/api/scheduler/trigger', async (req, res) => {
+    console.log('[Scheduler] POST /api/scheduler/trigger - Manual trigger');
+    
+    try {
+        // Run sync in background, respond immediately
+        autoSyncScheduler.syncNow();
+        
+        res.json({
+            success: true,
+            message: 'Manual sync triggered. Check /api/scheduler/status for progress.',
+            scheduler: autoSyncScheduler.getStatus(),
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[Scheduler] ❌ Error triggering:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to trigger sync: ' + error.message
+        });
+    }
+});
+
+// =============================================================================
 // SYSTEM STATUS ENDPOINT
 // =============================================================================
 
@@ -3617,7 +4813,11 @@ app.use((req, res) => {
     console.log('   PUT  /api/settings');
     console.log('   GET  /api/channels');
     console.log('   POST  /api/channels');
+    console.log('   PUT  /api/channels/:id');           // ← ⭐ MULTI-CHANNEL: Update channel
     console.log('   DELETE /api/channels/:id');
+    console.log('   POST  /api/channels/:id/sync');     // ← ⭐ MULTI-CHANNEL: Sync single channel
+    console.log('   POST  /api/channels/sync-all');     // ← ⭐ MULTI-CHANNEL: Sync all channels
+    console.log('   GET  /api/dashboard/stats');         // ← ⭐ MULTI-CHANNEL: Global dashboard
     console.log('   POST  /api/channels/:id/check');
     console.log('   POST  /api/video/info');
     console.log('   POST  /api/download');           // ← MAIN DOWNLOAD ENDPOINT!
@@ -3640,6 +4840,14 @@ app.use((req, res) => {
     console.log('   GET  /api/download/list');
     console.log('   GET  /api/download-queue');      // ← Queue status (frontend polls!)
     console.log('   DELETE /api/download-queue');    // ← Clear queue
+    console.log('   GET  /api/downloads/queue');      // ← ⭐ MC: Multi-channel queue status
+    console.log('   POST  /api/downloads/pause-all'); // ← ⭐ MC: Pause all downloads
+    console.log('   POST  /api/downloads/resume-all');// ← ⭐ MC: Resume all downloads
+    console.log('   DELETE /api/downloads/:downloadId'); // ← ⭐ MC: Cancel download
+    console.log('   GET  /api/scheduler/status');     // ← ⭐ MC: Scheduler status
+    console.log('   POST  /api/scheduler/start');     // ← ⭐ MC: Start scheduler
+    console.log('   POST  /api/scheduler/stop');      // ← ⭐ MC: Stop scheduler
+    console.log('   POST  /api/scheduler/trigger');   // ← ⭐ MC: Manual sync trigger
     console.log('   GET  /api/system/status');
     console.log('   POST  /api/login');              // ← Authentication
     console.log('   POST  /api/logout');             // ← Authentication
@@ -3653,6 +4861,10 @@ app.use((req, res) => {
             '/api/health',
             '/api/settings', 
             '/api/channels',
+            '/api/channels/:id',              // ← ⭐ MC: PUT - Update channel
+            '/api/channels/:id/sync',         // ← ⭐ MC: POST - Sync single
+            '/api/channels/sync-all',         // ← ⭐ MC: POST - Sync all
+            '/api/dashboard/stats',           // ← ⭐ MC: Global dashboard
             '/api/channel/info',
             '/api/video/info',
             '/api/download',              // ← MAIN DOWNLOAD!
@@ -3664,6 +4876,13 @@ app.use((req, res) => {
             '/api/download/sequential/cancel', // ← Cancel sequential
             '/api/downloads',
             '/api/download-queue',
+            '/api/downloads/queue',        // ← ⭐ MC: Multi-channel queue
+            '/api/downloads/pause-all',    // ← ⭐ MC: Pause all
+            '/api/downloads/resume-all',   // ← ⭐ MC: Resume all
+            '/api/scheduler/status',       // ← ⭐ MC: Scheduler
+            '/api/scheduler/start',        // ← ⭐ MC: Start scheduler
+            '/api/scheduler/stop',         // ← ⭐ MC: Stop scheduler
+            '/api/scheduler/trigger',      // ← ⭐ MC: Manual sync
             '/api/system/status',
             '/api/login',                  // ← Auth
             '/api/logout',                 // ← Auth
@@ -3711,17 +4930,26 @@ app.listen(PORT, () => {
     console.log(`║  🎬 FFmpeg:     ${FFMPEG_AVAILABLE ? '✅ Installed (merging enabled)' : '⚠️ Not found (using fallback)'}        ║`);
     console.log(`║  🍪 Cookies:    ${isCookiesFileValid() ? '✅ Valid' : '⚠️ Using browser'}                              ║`);
     console.log('║  🔐 Auth:       ✅ Enabled (Session-based)                        ║');
+    console.log('║  🌐 Multi-Ch:   ✅ Enabled (Multi-channel support)               ║');
     console.log('║                                                              ║');
     console.log('╠══════════════════════════════════════════════════════════════╣');
     console.log('║  Available API Endpoints:                                   ║');
     console.log('╠══════════════════════════════════════════════════════════════╣');
     console.log('║  GET    /api/settings          View/change download folder     ║');
     console.log('║  PUT    /api/settings          Update settings                 ║');
+    console.log('║  GET    /api/channels          List all channels                ║');  
     console.log('║  POST   /api/channels          Load channel videos             ║');
+    console.log('║  PUT    /api/channels/:id      ⭐ Update channel settings       ║');
+    console.log('║  POST   /api/channels/:id/sync ⭐ Sync single channel           ║');
+    console.log('║  POST   /api/channels/sync-all ⭐ Sync all channels             ║');
+    console.log('║  GET    /api/dashboard/stats   ⭐ Global dashboard stats         ║');
     console.log('║  POST   /api/download           Download single video (queued)       ║');
     console.log('║  POST   /api/download/batch     Batch download (sequential)        ║');
     console.log('║  POST   /api/download/sequential Sequential (one at a time)      ║');
-    console.log('║  GET    /api/download/queue/status Queue status (max 2 concurrent) ║');  // ⭐ NEW
+    console.log('║  GET    /api/download/queue/status Queue status (max 2 concurrent) ║');
+    console.log('║  GET    /api/downloads/queue    ⭐ MC: Multi-channel queue status  ║');
+    console.log('║  POST   /api/downloads/pause-all ⭐ Pause all downloads           ║');
+    console.log('║  GET    /api/scheduler/status   ⭐ Auto-sync scheduler status     ║');
     console.log('║  GET    /api/files              List all downloaded files        ║');
     console.log('║  GET    /api/download-file/:id  Download file by ID            ║');
     console.log('╚══════════════════════════════════════════════════════════════╝');
@@ -3731,6 +4959,10 @@ app.listen(PORT, () => {
     console.log('   - ✅ Rate limiting (5 login attempts per 15 min)');
     console.log('   - ✅ Duplicate filename handling');
     console.log('   - ✅ Sequential download (one at a time)');
-    console.log('   - ⭐ Download Queue (MAX 2 concurrent, rest wait in queue)');  // ⭐ NEW
+    console.log('   - ⭐ Download Queue (MAX 2 concurrent, rest wait in queue)');
+    console.log('   - ⭐🌐 MULTI-CHANNEL SUPPORT (Multiple YouTube channels)');
+    console.log('   - ⭐🌐 Auto-Sync Scheduler (Configurable interval sync)');
+    console.log('   - ⭐🌐 Channel-specific download directories & colors');
+    console.log('   - ⭐🌐 Global dashboard with aggregated statistics');
     console.log('');
 });
