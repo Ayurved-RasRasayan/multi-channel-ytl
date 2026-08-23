@@ -21,6 +21,20 @@ const {
 
 logger.info('Server', '🚀 Server starting with enhanced logging enabled');
 // =============================================================================
+
+// =============================================================================
+// ⭐ DEBUGGING & LOGGING SYSTEM - Auto-added for download debugging
+// =============================================================================
+const { 
+    logger, 
+    createRequestLogger, 
+    addLogEndpoints,
+    spawnYtDlpWithLogging,
+    diagnoseDownloadError
+} = require('../backend-logging-enhancement');
+
+logger.info('Server', '🚀 Server starting with enhanced logging enabled');
+// =============================================================================
 // =============================================================================
 // AUTHENTICATION & SECURITY MODULES
 // =============================================================================
@@ -238,7 +252,7 @@ function isCookiesFileValid() {
         console.log('[isCookiesFileValid] Expected: 7 tab-separated fields');
         console.log('[isCookiesFileValid] Actual:', fields.length, 'fields');
         
-        if (fields.length  {
+        if (fields.length < 7) {
                 console.log(`   Field ${i}: [${field.substring(0, 50)}]`);
             });
             return false;
@@ -1462,6 +1476,19 @@ console.log('╚═════════════════════�
 
 const app = express();
 app.use(cors());
+
+
+// =============================================================================
+// ⭐ ACTIVATE LOGGING MIDDLEWARE & ENDPOINTS
+// =============================================================================
+// Request logging (must be BEFORE routes)
+app.use(createRequestLogger(logger));
+
+// Log viewing API endpoints
+addLogEndpoints(app, logger);
+
+logger.info('Server', '✅ Logging endpoints activated: /api/logs, /api/test-download');
+// =============================================================================
 
 
 // =============================================================================
