@@ -5,9 +5,6 @@
 # =============================================================================
 
 startup_process_killer() {
-    echo "[STARTUP] Waiting 3 seconds for system to stabilize..."
-    sleep 3
-    
     echo "[STARTUP] Searching for stale processes..."
     
     local killed_bash=0
@@ -64,7 +61,7 @@ startup_process_killer
 
 # Configuration
 CLEANUP_LOG="cleanup.log"
-GRACEFUL_DELAY=3  # Seconds to wait before force-killing
+GRACEFUL_DELAY=0  # Seconds to wait (0 = instant exit, no delay!)
 
 # Logging function
 cleanup_log() {
@@ -177,11 +174,25 @@ cleanup_generic() {
     cleanup_log "Generic cleanup completed"
 }
 
-# Graceful shutdown with delay before force-kill
-graceful_cleanup() {
-    cleanup_log "Starting graceful shutdown (${GRACEFUL_DELAY}s delay)..."
+# ⚡ INSTANT EXIT CLEANUP - No delays!
+instant_cleanup() {
+    cleanup_log "⚡ Instant cleanup - exiting immediately..."
     
-    # Attempt graceful termination first
+    # Kill everything immediately (no waiting)
+    if command -v taskkill &> /dev/null; then
+        taskkill //F //IM sleep.exe 2>/dev/null || true
+    fi
+    if command -v pkill &> /dev/null; then
+        pkill -9 -P $$ 2>/dev/null || true
+        pkill -9 -f "sleep" 2>/dev/null || true
+    fi
+    cleanup_log "✅ Instant cleanup done"
+}
+
+# Graceful shutdown (kept but disabled by default)
+graceful_cleanup() {
+    cleanup_log "Graceful shutdown (${GRACEFUL_DELAY}s)..."
+    
     if [ "$OS_TYPE" = "windows" ] || [ "$OS_TYPE" = "msys" ] || [ "$OS_TYPE" = "cygwin" ]; then
         taskkill //F //IM sleep.exe 2>/dev/null || true
     else
@@ -189,13 +200,11 @@ graceful_cleanup() {
         pkill -f "sleep" 2>/dev/null || true
     fi
     
-    # Wait for processes to terminate gracefully
-    cleanup_log "Waiting ${GRACEFUL_DELAY}s for graceful termination..."
-    sleep "$GRACEFUL_DELAY"
-    
-    # Force kill anything still running
-    cleanup_log "Force-killing remaining processes..."
-    cleanup_processes_force
+    # Only wait if delay > 0
+    if [ "${GRACEFUL_DELAY:-0}" -gt 0 ] 2>/dev/null; then
+        sleep "$GRACEFUL_DELAY"
+        cleanup_processes_force
+    fi
 }
 
 # Force kill remaining processes
@@ -211,14 +220,14 @@ cleanup_processes_force() {
 }
 
 # =============================================================================
-# REGISTER TRAPS - Catch ALL exit signals
+# ⚡ INSTANT EXIT TRAPS - Exit immediately on ALL signals (NO DELAYS!)
 # =============================================================================
-trap 'cleanup_log "Received EXIT signal"; graceful_cleanup' EXIT
-trap 'cleanup_log "Received INT signal (Ctrl+C)"; graceful_cleanup' INT
-trap 'cleanup_log "Received TERM signal"; graceful_cleanup' TERM
-trap 'cleanup_log "Received HUP signal (terminal closed)"; graceful_cleanup' HUP
-trap 'cleanup_log "Received QUIT signal"; graceful_cleanup' QUIT
-trap 'cleanup_log "Received BREAK signal"; graceful_cleanup' BREAK
+trap 'instant_cleanup; exit 0' EXIT
+trap 'instant_cleanup; exit 130' INT          # Ctrl+C
+trap 'instant_cleanup; exit 143' TERM         # kill command
+trap 'instant_cleanup; exit 129' HUP          # Terminal closed
+trap 'instant_cleanup; exit 131' QUIT
+trap 'instant_cleanup; exit 0' BREAK
 
 cleanup_log "🚀 Process cleanup system initialized (PID: $$)"
 cleanup_log "Traps registered for: EXIT, INT, TERM, HUP, QUIT, BREAK"
@@ -277,12 +286,28 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# ⭐ NEW: Debug Colors for Frontend/Backend logging
+MAGENTA='\033[0;35m'      # FRONTEND - Requests from browser
+BRIGHT_GREEN='\033[1;32m' # SUCCESS - Downloads complete
+BRIGHT_RED='\033[1;31m'   # ERRORS - Critical errors
+BRIGHT_CYAN='\033[1;36m'  # BACKEND - Server operations
+BRIGHT_YELLOW='\033[1;33m' # WARNINGS
+WHITE='\033[1;37m'        # HEADERS/Important info
+
 log()   { echo -e "${GREEN}[✓]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 error() { echo -e "${RED}[✗]${NC} $1"; }
 dbg()   { echo -e "${BLUE}[•]${NC} $1"; }
 ok()    { echo -e "${CYAN}${BOLD}[OK]${NC} $1"; }
 step()  { echo -e "\n${BOLD}${CYAN}━━━ $1 ━━━${NC}"; }
+
+# ⭐ NEW: Debug Logging Functions with Color Coding
+log_backend()    { echo -e "${BRIGHT_CYAN}[BACKEND]${NC} $(date '+%H:%M:%S') $1"; }
+log_frontend()   { echo -e "${MAGENTA}[FRONTEND]${NC} $(date '+%H:%M:%S') $1"; }
+log_download()   { echo -e "${BRIGHT_GREEN}[DOWNLOAD]${NC} $(date '+%H:%M:%S') $1"; }
+log_error()      { echo -e "${BRIGHT_RED}[ERROR]${NC} $(date '+%H:%M:%S') $1"; }
+log_warning()    { echo -e "${BRIGHT_YELLOW}[WARNING]${NC} $(date '+%H:%M:%S') $1"; }
+log_info()       { echo -e "${WHITE}[INFO]${NC} $(date '+%H:%M:%S') $1"; }
 
 # =============================================================================
 # Get the directory where THIS script is located
@@ -1300,9 +1325,26 @@ start_server() {
     
     log "✅ Port $PORT is now available"
     
+    # ⭐ NEW: Enhanced logging before starting server
+    log_info "═══ SERVER STARTUP DEBUG INFO ═══"
+    log_info "Server JS: $SERVER_JS"
+    log_info "Working Dir: $(pwd)"
+    log_info "DOWNLOADS_DIR: $DOWNLOADS_DIR"
+    log_info "Node version: $(node --version 2>/dev/null || echo 'unknown')"
+    log_info "npm version: $(npm --version 2>/dev/null || echo 'unknown')"
+    log_info "yt-dlp: $(which yt-dlp 2>/dev/null || echo 'not found')"
+    log_info "FFmpeg: $(which ffmpeg 2>/dev/null || echo 'not found')"
+    log_info "═════════════════════════════════"
+    
     # Start server in background with DOWNLOADS_DIR environment variable
     DOWNLOADS_DIR="$DOWNLOADS_DIR" node "$SERVER_JS" > /tmp/youtube-downloader-server.log 2>&1 &
     SERVER_PID=$!
+    
+    # Export SERVER_PID for debug monitor
+    export SERVER_PID
+    
+    log_backend "🚀 Server process started (PID: $SERVER_PID)"
+    log_backend "Log file: /tmp/youtube-downloader-server.log"
     
     sleep 3
 
@@ -1311,19 +1353,43 @@ start_server() {
         ok "✅ Server started successfully! (PID: $SERVER_PID)"
         log "Server running at: $URL"
         
-        # Show last few lines of server log
-        log "Server startup log:"
-        tail -10 /tmp/youtube-downloader-server.log 2>/dev/null | while read line; do
-            log "  $line"
+        # ⭐ NEW: Show server startup summary with colors
+        echo ""
+        log_backend "═══ SERVER STARTUP SUCCESS ═══"
+        log_backend "PID: $SERVER_PID"
+        log_backend "URL: $URL"
+        log_backend "Log: /tmp/youtube-downloader-server.log"
+        log_backend "══════════════════════════════"
+        
+        # Show last few lines of server log with color coding
+        log "Server startup log (last 15 lines):"
+        tail -15 /tmp/youtube-downloader-server.log 2>/dev/null | while read -r line; do
+            # Apply basic color coding to startup log preview
+            if echo "$line" | grep -qiE "error|fail|Error"; then
+                log_error "  $line"
+            elif echo "$line" | grep -qiE "started|ready|listening|✅|Server"; then
+                log_download "  $line"
+            else
+                log_backend "  $line"
+            fi
         done
     else
         error "❌ Server failed to start!"
         error "Check log: /tmp/youtube-downloader-server.log"
         error ""
-        error "Last 20 lines of server log:"
-        tail -20 /tmp/youtube-downloader-server.log 2>/dev/null | while read line; do
-            error "  $line"
+        error "Last 25 lines of server log:"
+        tail -25 /tmp/youtube-downloader-server.log 2>/dev/null | while read -r line; do
+            log_error "  $line"
         done
+        
+        # ⭐ NEW: Additional debug info on failure
+        echo ""
+        log_error "═══ DEBUG INFO ON FAILURE ═══"
+        log_error "Server JS exists: $([ -f "$SERVER_JS" ] && echo 'YES' || echo 'NO')"
+        log_error "Server Dir exists: $([ -d "$SERVER_DIR" ] && echo 'YES' || echo 'NO')"
+        log_error "Port 3000 in use: $(lsof -ti:3000 2>/dev/null || echo 'no')"
+        log_error "Node.js: $(node --version 2>/dev/null || echo 'not found')"
+        log_error "══════════════════════════════"
         return 1
     fi
 
@@ -1365,27 +1431,365 @@ open_browser() {
 }
 
 # =============================================================================
-# FUNCTION: Keep Terminal Open
+# FUNCTION: Keep Terminal Open WITH REAL-TIME SPLIT-SCREEN DEBUG MONITORING
 # =============================================================================
 keep_terminal_open() {
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                                                              ║"
-    echo "║   🎬 SERVER IS RUNNING - KEEP THIS WINDOW OPEN              ║"
-    echo "║                                                              ║"
-    echo "║   🌐 URL: ${BOLD}$URL${NC}"
-    echo "║   📁 Downloads: ${BOLD}${SERVER_DIR:-unknown}/downloads${NC}           ║"
-    echo "║                                                              ║"
-    echo "║   Press Ctrl+C to stop the server                           ║"
-    echo "║                                                              ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo ""
-
-    # Keep script running forever
-    # This prevents the terminal from closing
+    # Initialize log files
+    LOG_FILE="/tmp/youtube-downloader-server.log"
+    FRONTEND_LOG="/tmp/ytl-frontend.log"
+    BACKEND_LOG="/tmp/ytl-backend.log"
+    DOWNLOAD_LOG="/tmp/ytl-download.log"
+    ERROR_LOG="/tmp/ytl-error.log"
+    DEBUG_LOG="/tmp/ytl-debug-monitor.log"
+    
+    # Clear/create separate log files
+    > "$FRONTEND_LOG"
+    > "$BACKEND_LOG"
+    > "$DOWNLOAD_LOG"
+    > "$ERROR_LOG"
+    
+    # Create debug header
+    echo "========================================" > "$DEBUG_LOG"
+    echo "YTL Split-Screen Debug Monitor" >> "$DEBUG_LOG"
+    echo "Started: $(date)" >> "$DEBUG_LOG"
+    echo "Server PID: $SERVER_PID" >> "$DEBUG_LOG"
+    echo "========================================" >> "$DEBUG_LOG"
+    
+    # ═══════════════════════════════════════════════════════════════
+    # ⭐ TERMINAL SETUP FOR SPLIT-SCREEN
+    # ═══════════════════════════════════════════════════════════════
+    
+    # Save terminal settings
+    stty -echo 2>/dev/null || true
+    
+    # Get terminal dimensions
+    TERM_LINES=$(tput lines 2>/dev/null || echo 30)
+    TERM_COLS=$(tput cols 2>/dev/null || echo 120)
+    
+    # Calculate panel dimensions (leave 4 rows for header, 2 for footer)
+    HEADER_ROWS=4
+    FOOTER_ROWS=2
+    PANEL_HEIGHT=$((TERM_LINES - HEADER_ROWS - FOOTER_ROWS))
+    HALF_COLS=$((TERM_COLS / 2 - 2))
+    
+    # Ensure minimum dimensions
+    [ $PANEL_HEIGHT -lt 8 ] && PANEL_HEIGHT=8
+    [ $HALF_COLS -lt 40 ] && HALF_COLS=40
+    
+    # ═══════════════════════════════════════════════════════════════
+    # ⭐ DRAW STATIC SPLIT-SCREEN HEADER
+    # ═══════════════════════════════════════════════════════════════
+    draw_screen_header() {
+        local timestamp=$(date '+%H:%M:%S')
+        local fe_count=$(wc -l < "$FRONTEND_LOG" 2>/dev/null || echo 0)
+        local be_count=$(wc -l < "$BACKEND_LOG" 2>/dev/null || echo 0)
+        local dl_count=$(wc -l < "$DOWNLOAD_LOG" 2>/dev/null || echo 0)
+        local err_count=$(wc -l < "$ERROR_LOG" 2>/dev/null || echo 0)
+        
+        # Move to top of screen and clear
+        printf '\033[H\033[2J'
+        
+        # Line 1: Main title bar
+        printf '\033[1;1H'
+        printf '\033[48;5;23m'  # Dark blue background
+        printf " \033[1;37m 🎬 YTL SPLIT-SCREEN DEBUG MONITOR \033[0m"
+        printf '%*s' $((TERM_COLS - 42)) ''
+        printf '\033[0m'
+        
+        # Line 2: Info bar with stats
+        printf '\033[2;1H'
+        printf " \033[1;36m ⏱ %s \033[0m" "$timestamp"
+        printf "│ \033[1;35m 🌐 FE:%s \033[0m" "$fe_count"
+        printf "│ \033[1;36m ⚙ BE:%s \033[0m" "$be_count"
+        printf "│ \033[1;32m 📥 DL:%s \033[0m" "$dl_count"
+        printf "│ \033[1;31m ❌ ER:%s \033[0m" "$err_count"
+        printf "│ \033[1;33m 🔧 PID:%s \033[0m" "$SERVER_PID"
+        printf '%*s' $((TERM_COLS - 80)) ''
+        
+        # Line 3: Column headers with divider
+        printf '\033[3;1H'
+        printf '\033[1;45m'  # Magenta background for left header
+        printf " %-*s " $HALF_COLS "🌐 FRONTEND (Browser HTTP Requests / XHR / Fetch)"
+        printf '\033[0m'
+        printf '│'
+        printf '\033[1;46m'  # Cyan background for right header  
+        printf " %-*s " $HALF_COLS "⚙️  BACKEND (Server Ops / yt-dlp / Downloads)"
+        printf '\033[0m'
+        
+        # Line 4: Separator line
+        printf '\033[4;1H'
+        printf '\033[1;m'
+        printf '─%.0s' $(seq 1 $TERM_COLS)
+        printf '\033[0m'
+    }
+    
+    # ═══════════════════════════════════════════════════════════════
+    # ⭐ DRAW FOOTER WITH CONTROLS
+    # ═══════════════════════════════════════════════════════════════
+    draw_screen_footer() {
+        local footer_row=$((HEADER_ROWS + PANEL_HEIGHT + 1))
+        
+        # Separator line
+        printf "\033[${footer_row};1H"
+        printf '\033[1;m'
+        printf '─%.0s' $(seq 1 $TERM_COLS)
+        printf '\033[0m'
+        
+        # Footer info line
+        printf "\033[$((footer_row+1));1H"
+        printf " \033[1;32m ✅ Server Running \033[0m"
+        printf "│ \033[1;37m URL: %s \033[0m" "$URL"
+        printf "│ \033[1;33m Press CTRL+C to stop \033[0m"
+        printf '%*s' $((TERM_COLS - 60)) ''
+    }
+    
+    # ═══════════════════════════════════════════════════════════════
+    # ⭐ DRAW LEFT PANEL (FRONTEND LOGS)
+    # ═══════════════════════════════════════════════════════════════
+    draw_frontend_panel() {
+        local start_row=$((HEADER_ROWS + 1))
+        
+        # Get last N lines for the panel height
+        local fe_lines=$(tail -$PANEL_HEIGHT "$FRONTEND_LOG" 2>/dev/null)
+        
+        # If no lines yet, show waiting message
+        if [ -z "$fe_lines" ]; then
+            for ((i=0; i<PANEL_HEIGHT; i++)); do
+                local row=$((start_row + i))
+                printf "\033[${row};2H"
+                if [ $i -eq $((PANEL_HEIGHT/2)) ]; then
+                    printf '\033[2;35m⏳ Waiting for frontend requests...\033[0m'
+                else
+                    printf '%*s' $((HALF_COLS)) ''
+                fi
+            done
+            return
+        fi
+        
+        # Convert to array
+        mapfile -t FE_ARRAY <<< "$fe_lines"
+        
+        # Draw each line
+        for ((i=0; i<PANEL_HEIGHT; i++)); do
+            local row=$((start_row + i))
+            printf "\033[${row};2H"
+            
+            if [ $i -lt ${#FE_ARRAY[@]} ]; then
+                local line="${FE_ARRAY[$i]}"
+                
+                # Truncate to fit panel width
+                if [ ${#line} -gt $HALF_COLS ]; then
+                    line="${line:0:$((HALF_COLS-3))}..."
+                fi
+                
+                # Print with frontend color (magenta prefix stripped, show clean)
+                printf '\033[0;35m%s\033[0m' "$line"
+            else
+                printf '%*s' $((HALF_COLS)) ''
+            fi
+            
+            # Clear rest of line
+            printf '\033[K'
+        done
+    }
+    
+    # ═══════════════════════════════════════════════════════════════
+    # ⭐ DRAW RIGHT PANEL (BACKEND LOGS)
+    # ═══════════════════════════════════════════════════════════════
+    draw_backend_panel() {
+        local start_row=$((HEADER_ROWS + 1))
+        local col=$((HALF_COLS + 4))  # Start after divider
+        
+        # Get last N lines for the panel height
+        local be_lines=$(tail -$PANEL_HEIGHT "$BACKEND_LOG" 2>/dev/null)
+        
+        # If no lines yet, show waiting message
+        if [ -z "$be_lines" ]; then
+            for ((i=0; i<PANEL_HEIGHT; i++)); do
+                local row=$((start_row + i))
+                printf "\033[${row};${col}H"
+                if [ $i -eq $((PANEL_HEIGHT/2)) ]; then
+                    printf '\033[1;36m⏳ Waiting for backend activity...\033[0m'
+                else
+                    printf '%*s' $((HALF_COLS)) ''
+                fi
+            done
+            return
+        fi
+        
+        # Convert to array
+        mapfile -t BE_ARRAY <<< "$be_lines"
+        
+        # Draw each line
+        for ((i=0; i<PANEL_HEIGHT; i++)); do
+            local row=$((start_row + i))
+            printf "\033[${row};${col}H"
+            
+            if [ $i -lt ${#BE_ARRAY[@]} ]; then
+                local line="${BE_ARRAY[$i]}"
+                
+                # Truncate to fit panel width
+                if [ ${#line} -gt $HALF_COLS ]; then
+                    line="${line:0:$((HALF_COLS-3))}..."
+                fi
+                
+                # Print with backend color (cyan)
+                printf '\033[1;36m%s\033[0m' "$line"
+            else
+                printf '%*s' $((HALF_COLS)) ''
+            fi
+            
+            # Clear rest of line
+            printf '\033[K'
+        done
+    }
+    
+    # ═══════════════════════════════════════════════════════════════
+    # ⭐ DRAW CENTER DIVIDER LINE
+    # ═══════════════════════════════════════════════════════════════
+    draw_divider() {
+        local center_col=$((HALF_COLS + 3))
+        local start_row=$((HEADER_ROWS + 1))
+        local end_row=$((start_row + PANEL_HEIGHT - 1))
+        
+        for ((row=start_row; row<=end_row; row++)); do
+            printf "\033[${row};${center_col}H"
+            printf '\033[1;37m│\033[0m'
+        done
+    }
+    
+    # ═══════════════════════════════════════════════════════════════
+    # ⭐ FULL SCREEN REFRESH FUNCTION
+    # ═══════════════════════════════════════════════════════════════
+    refresh_screen() {
+        draw_screen_header
+        draw_frontend_panel
+        draw_divider
+        draw_backend_panel
+        draw_screen_footer
+        
+        # Move cursor to bottom to avoid flicker
+        printf "\033[$((TERM_LINES));1H"
+    }
+    
+    log_info "🖥️  Real-Time Split-Screen Debug Monitor Starting..."
+    log_info "Terminal: ${TERM_LINES}x${TERM_COLS} | Panel Height: $PANEL_HEIGHT | Panel Width: $HALF_COLS"
+    log_info "Frontend log: $FRONTEND_LOG"
+    log_info "Backend log: $BACKEND_LOG"
+    log_info "Press Ctrl+C to stop"
+    sleep 1
+    
+    # Initial screen draw
+    refresh_screen
+    
+    # ═══════════════════════════════════════════════════════════════
+    # ⭐ MAIN SPLIT-SCREEN DEBUG MONITOR LOOP
+    # ═══════════════════════════════════════════════════════════════
+    local line_count=0
+    local last_size=0
+    local refresh_counter=0
+    
     while true; do
-        sleep 3600  # Sleep for 1 hour, then loop
+        # Check if server is still running
+        if ! kill -0 $SERVER_PID 2>/dev/null; then
+            # Restore terminal
+            stty echo 2>/dev/null || true
+            printf '\033[H\033[2J'
+            
+            echo ""
+            echo -e "${BRIGHT_RED}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${BRIGHT_RED}║  ❌ SERVER PROCESS DIED! (PID: $SERVER_PID)                                    ║${NC}"
+            echo -e "${BRIGHT_RED}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+            
+            log_error "❌ SERVER PROCESS DIED! (PID: $SERVER_PID)"
+            log_error "Last 20 lines of server log:"
+            tail -20 "$LOG_FILE" 2>/dev/null | while read -r line; do
+                log_error "  $line"
+            done
+            log_warning "Attempting to restart server..."
+            
+            # Try to restart server
+            cd "$SERVER_DIR" 2>/dev/null
+            DOWNLOADS_DIR="$DOWNLOADS_DIR" node "$SERVER_JS" > "$LOG_FILE" 2>&1 &
+            SERVER_PID=$!
+            sleep 3
+            
+            if kill -0 $SERVER_PID 2>/dev/null; then
+                log_backend "✅ Server restarted successfully (New PID: $SERVER_PID)"
+                # Re-enable echo and continue monitoring
+                stty -echo 2>/dev/null || true
+            else
+                log_error "❌ Failed to restart server!"
+                log_error "Check log file manually: $LOG_FILE"
+                break
+            fi
+        fi
+        
+        # Check for new lines in server log file
+        if [ -f "$LOG_FILE" ]; then
+            current_size=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
+            
+            if [ "$current_size" -gt "$last_size" ] 2>/dev/null; then
+                # Read new lines only
+                new_lines=$(tail -n +$((last_size + 1)) "$LOG_FILE" 2>/dev/null | head -n $((current_size - last_size)))
+                
+                # Process each line and categorize into appropriate log file
+                while IFS= read -r line; do
+                    ((line_count++))
+                    
+                    # Skip empty lines
+                    [ -z "$line" ] && continue
+                    
+                    # ⭐ CATEGORIZE AND LOG TO APPROPRIATE FILE
+                    
+                    # FRONTEND REQUESTS (MAGENTA) - HTTP requests from browser
+                    if echo "$line" | grep -qiE "\[HTTP\]|GET /|POST /|PUT /|DELETE /|\[Channels\]|\[Scheduler\]|/api/|/js/|/css/|User-Agent|XHR|fetch\(|ajax"; then
+                        echo "$(date '+%H:%M:%S') $line" >> "$FRONTEND_LOG"
+                    
+                    # DOWNLOAD PROGRESS (GREEN) - Download operations (show in BOTH download log AND backend panel)
+                    elif echo "$line" | grep -qiE "Download|download|Progress|%|speed|MiB/s|completed|finished|saved|✅|Starting download|Queue|queued|Downloading|\[Auth\]"; then
+                        echo "$(date '+%H:%M:%S') $line" >> "$DOWNLOAD_LOG"
+                        echo "$(date '+%H:%M:%S') $line" >> "$BACKEND_LOG"  # Also show in backend panel
+                    
+                    # ERRORS (RED) - Any error messages (show in BOTH error log AND backend panel)
+                    elif echo "$line" | grep -qiE "error|Error|ERROR|fail|FAIL|exception|Exception|reject|denied|forbidden|404|500|502|503|cannot|Cannot|invalid|Invalid|missing|Missing|EADDRINUSE"; then
+                        echo "$(date '+%H:%M:%S') $line" >> "$ERROR_LOG"
+                        echo "$(date '+%H:%M:%S') $line" >> "$BACKEND_LOG"  # Also show in backend panel
+                    
+                    # WARNINGS (YELLOW)
+                    elif echo "$line" | grep -qiE "warn|WARN|warning|WARNING|caution|deprecated|fallback|retry|Retry|⚠️"; then
+                        echo "$(date '+%H:%M:%S') $line" >> "$BACKEND_LOG"
+                    
+                    # BACKEND OPERATIONS (CYAN) - Everything else from server
+                    else
+                        echo "$(date '+%H:%M:%S') $line" >> "$BACKEND_LOG"
+                    fi
+                    
+                done <<< "$new_lines"
+                
+                last_size=$current_size
+            fi
+        fi
+        
+        # ⭐ REFRESH SPLIT-SCREEN DISPLAY EVERY CYCLE
+        ((refresh_counter++))
+        if [ $((refresh_counter % 2)) -eq 0 ]; then  # Refresh every 1 second (2 cycles × 0.5s)
+            refresh_screen
+        fi
+        
+        # Heartbeat every 30 seconds
+        if [ $((line_count % 60)) -eq 0 ] && [ $line_count -gt 0 ]; then
+            echo "$(date '+%H:%M:%S') 💓 Heartbeat | Server: PID $SERVER_PID | Lines processed: $line_count" >> "$DEBUG_LOG"
+        fi
+        
+        # Small delay to prevent high CPU usage
+        sleep 0.5
     done
+    
+    # Restore terminal on exit
+    stty echo 2>/dev/null || true
+    printf '\033[H\033[2J'
+    printf '\033[?25h'  # Show cursor
 }
 
 # =============================================================================

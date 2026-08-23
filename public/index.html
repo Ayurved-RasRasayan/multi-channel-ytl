@@ -2361,7 +2361,7 @@
                 <h3 id="channelModalTitle"><i class="fas fa-plus-circle"></i> Add New Channel</h3>
                 <button onclick="closeModal('channelModal')" class="close-btn" aria-label="Close modal">&times;</button>
             </div>
-            <form id="channelForm" onsubmit="handleChannelSubmit(event)">
+            <form id="channelForm" onsubmit="addNewChannel(event)">
                 <div class="form-group">
                     <label for="channelUrl">Channel URL *</label>
                     <input type="url" id="channelUrl" required placeholder="https://youtube.com/@channelname" autocomplete="url">

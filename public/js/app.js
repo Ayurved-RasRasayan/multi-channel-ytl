@@ -143,6 +143,22 @@ const API = {
         });
     },
     
+    // ⭐ MAIN DOWNLOAD ENDPOINT - Start video download
+    async startDownload(downloadData) {
+        return this.request('/download', {
+            method: 'POST',
+            body: JSON.stringify(downloadData)
+        });
+    },
+    
+    // ⭐ BATCH DOWNLOAD - Download multiple videos
+    async startBatchDownloads(downloads) {
+        return this.request('/download/batch', {
+            method: 'POST',
+            body: JSON.stringify({ downloads })
+        });
+    },
+    
     // Scheduler APIs
     async getSchedulerStatus() {
         return this.request('/scheduler/status');
@@ -913,35 +929,65 @@ function updateBatchActionButtons() {
 }
 
 // =============================================================================
-// DOWNLOAD OPERATIONS
+// DOWNLOAD OPERATIONS - ⭐ NOW WITH ACTUAL API CALLS!
 // =============================================================================
 
 async function downloadSelected() {
     if (!AppState.activeChannelId || AppState.selectedVideos.size === 0) return;
     
     const videoIds = Array.from(AppState.selectedVideos);
+    const channel = AppState.channels.get(AppState.activeChannelId);
+    
+    if (!channel) {
+        showToast('Channel not found', 'error');
+        return;
+    }
     
     try {
-        showToast(`Starting download of ${videoIds.length} video(s)...`, 'info');
+        showToast(`Starting download of ${videoIds.length} video(s)...`, 'info', 5000);
         
-        // Call download API (implementation depends on backend endpoint)
-        // For now, show a message since the exact endpoint may vary
-        console.log('Would download videos:', videoIds);
+        // ⭐ ACTUAL API CALL - Download each selected video
+        let successCount = 0;
+        let failCount = 0;
         
-        // TODO: Implement actual download call when backend endpoint is ready
-        // await API.startDownloads({
-        //     channelId: AppState.activeChannelId,
-        //     videoIds: videoIds
-        // });
+        for (const videoId of videoIds) {
+            const video = (channel.videos || []).find(v => v.id === videoId);
+            if (!video) continue;
+            
+            try {
+                // Build YouTube URL from video ID
+                const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                
+                await API.startDownload({
+                    url: videoUrl,
+                    videoId: videoId,
+                    channelId: AppState.activeChannelId,
+                    channelName: channel.name,
+                    title: video.title || `Video ${videoId}`,
+                    format: channel.settings?.format || 'mp4',
+                    quality: channel.settings?.quality || 'best'
+                });
+                
+                successCount++;
+            } catch (err) {
+                console.error(`Failed to queue ${videoId}:`, err);
+                failCount++;
+            }
+            
+            // Small delay between requests to avoid overwhelming server
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
         
-        showToast(`${videoIds.length} downloads queued!`, 'success');
+        if (successCount > 0) {
+            showToast(`✅ ${successCount} download(s) started!${failCount > 0 ? ` (${failCount} failed)` : ''}`, 
+                     failCount > 0 ? 'warning' : 'success');
+        } else {
+            showToast(`❌ Failed to start any downloads`, 'error');
+        }
         
         // Clear selection
         AppState.selectedVideos.clear();
-        if (AppState.activeChannelId) {
-            const channel = AppState.channels.get(AppState.activeChannelId);
-            if (channel) renderVideoTable(channel);
-        }
+        if (channel) renderVideoTable(channel);
         
         // Refresh queue
         refreshQueueStatus();
@@ -958,23 +1004,52 @@ async function downloadAllNew() {
     const channel = AppState.channels.get(AppState.activeChannelId);
     if (!channel) return;
     
-    // Get all non-downloaded video IDs
-    const newVideoIds = (channel.videos || [])
-        .filter(v => !v.isDownloaded)
-        .map(v => v.id);
+    // Get all non-downloaded videos
+    const newVideos = (channel.videos || []).filter(v => !v.isDownloaded);
     
-    if (newVideoIds.length === 0) {
+    if (newVideos.length === 0) {
         showToast('No new videos to download!', 'info');
         return;
     }
     
     try {
-        showToast(`Queuing ${newVideoIds.length} new video(s) for download...`, 'info');
+        showToast(`Queuing ${newVideos.length} new video(s) for download...`, 'info', 5000);
         
-        // TODO: Implement actual download call
-        console.log('Would download all new videos:', newVideoIds);
+        // ⭐ ACTUAL API CALL - Download all new videos
+        let successCount = 0;
+        let failCount = 0;
         
-        showToast(`${newVideoIds.length} videos queued for download!`, 'success');
+        for (const video of newVideos) {
+            try {
+                const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
+                
+                await API.startDownload({
+                    url: videoUrl,
+                    videoId: video.id,
+                    channelId: AppState.activeChannelId,
+                    channelName: channel.name,
+                    title: video.title || `Video ${video.id}`,
+                    format: channel.settings?.format || 'mp4',
+                    quality: channel.settings?.quality || 'best'
+                });
+                
+                successCount++;
+            } catch (err) {
+                console.error(`Failed to queue ${video.id}:`, err);
+                failCount++;
+            }
+            
+            // Small delay between requests
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
+        if (successCount > 0) {
+            showToast(`✅ ${successCount} videos queued!${failCount > 0 ? ` (${failCount} failed)` : ''}`, 
+                     failCount > 0 ? 'warning' : 'success');
+        } else {
+            showToast(`❌ Failed to queue downloads`, 'error');
+        }
+        
         refreshQueueStatus();
         
     } catch (error) {
@@ -983,19 +1058,59 @@ async function downloadAllNew() {
     }
 }
 
+/**
+ * ⭐ MAIN FUNCTION: Download a single video
+ * This is what gets called when you click the download button on a video!
+ */
 async function downloadSingleVideo(channelId, videoId) {
     try {
-        showToast('Starting download...', 'info');
+        const channel = AppState.channels.get(channelId);
+        if (!channel) {
+            showToast('Channel not found', 'error');
+            return;
+        }
         
-        // TODO: Implement single video download
-        console.log('Would download single video:', { channelId, videoId });
+        // Find the video in channel data
+        const video = (channel.videos || []).find(v => v.id === videoId);
+        if (!video) {
+            showToast('Video not found', 'error');
+            return;
+        }
         
-        showToast('Download started!', 'success');
+        showToast(`⬇️ Starting download: ${video.title?.substring(0, 40) || videoId}...`, 'info', 5000);
+        
+        // Build YouTube URL
+        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        
+        // ⭐ ACTUAL API CALL TO START DOWNLOAD
+        const result = await API.startDownload({
+            url: videoUrl,
+            videoId: videoId,
+            channelId: channelId,
+            channelName: channel.name,
+            title: video.title || `Video ${videoId}`,
+            format: channel.settings?.format || 'mp4',
+            quality: channel.settings?.quality || 'best'
+        });
+        
+        console.log('[Download] ✅ API Response:', result);
+        
+        if (result.success || result.downloadId) {
+            showToast(`✅ Download started: ${video.title?.substring(0, 30) || videoId}...`, 'success');
+            
+            // Mark as downloading in UI
+            video.isDownloading = true;
+            renderVideoTable(channel);
+        } else {
+            throw new Error(result.error || 'Unknown error starting download');
+        }
+        
+        // Refresh queue status
         refreshQueueStatus();
         
     } catch (error) {
-        console.error('Single download error:', error);
-        showToast('Download failed: ' + error.message, 'error');
+        console.error('[Download] ❌ Error:', error);
+        showToast(`❌ Download failed: ${error.message}`, 'error');
     }
 }
 
@@ -1379,6 +1494,186 @@ function formatRelativeTime(date) {
     if (diffDays < 7) return `${diffDays}d ago`;
     
     return date.toLocaleDateString();
+}
+
+// =============================================================================
+// MISSING FUNCTIONS - BUG FIXES
+// =============================================================================
+
+/**
+ * Toggle sidebar visibility (mobile responsive)
+ * Called from: hamburger menu button onclick
+ */
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    
+    if (sidebar && overlay) {
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('active');
+        
+        // Update state
+        AppState.sidebarCollapsed = !sidebar.classList.contains('open');
+        
+        console.log('[UI] Sidebar toggled:', AppState.sidebarCollapsed ? 'collapsed' : 'expanded');
+    }
+}
+
+/**
+ * Remove the currently active channel
+ * Called from: channel action buttons
+ */
+async function removeCurrentChannel() {
+    if (!AppState.activeChannelId) {
+        showToast('No channel selected', 'warning');
+        return;
+    }
+    
+    const channelId = AppState.activeChannelId;
+    const channel = AppState.channels.get(channelId);
+    
+    if (!channel) {
+        showToast('Channel not found', 'error');
+        return;
+    }
+    
+    // Confirm deletion
+    if (!confirm(`Are you sure you want to remove channel "${channel.name}"?\nThis will NOT delete downloaded files.`)) {
+        return;
+    }
+    
+    try {
+        await API.deleteChannel(channelId);
+        
+        // Remove from state
+        AppState.channels.delete(channelId);
+        
+        // Remove from open tabs
+        AppState.openTabs = AppState.openTabs.filter(id => id !== channelId);
+        
+        // Clear active if it was the deleted one
+        if (AppState.activeChannelId === channelId) {
+            AppState.activeChannelId = null;
+            AppState.currentView = 'dashboard';
+        }
+        
+        showToast(`Channel "${channel.name}" removed`, 'success');
+        
+        // Refresh UI
+        renderSidebarChannelList();
+        renderDashboard();
+        closeAllTabs();
+        
+    } catch (error) {
+        console.error('Remove channel error:', error);
+        showToast('Failed to remove channel: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Export application data (channels, settings) to JSON file
+ * Called from: Settings modal export button
+ */
+function exportData() {
+    try {
+        const exportObj = {
+            version: '2.0',
+            exportDate: new Date().toISOString(),
+            channels: Array.from(AppState.channels.entries()).map(([id, ch]) => ({
+                id,
+                ...ch
+            })),
+            settings: {
+                maxConcurrent: document.getElementById('maxConcurrent')?.value || 3,
+                defaultQuality: document.getElementById('defaultQuality')?.value || 'best',
+                autoSyncEnabled: AppState.autoSyncEnabled
+            },
+            stats: {
+                totalChannels: AppState.channels.size,
+                totalVideos: Array.from(AppState.channels.values()).reduce((sum, ch) => 
+                    sum + (ch.stats?.totalVideos || ch.videos?.length || 0), 0)
+            }
+        };
+        
+        const dataStr = JSON.stringify(exportObj, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ytl-export-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        showToast('Data exported successfully!', 'success');
+        console.log('[Export] Data exported:', exportObj.stats);
+        
+    } catch (error) {
+        console.error('Export error:', error);
+        showToast('Failed to export data: ' + error.message, 'error');
+    }
+}
+
+/**
+ * Import application data from JSON file
+ * Called from: Settings modal import button
+ */
+function importData() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    
+    input.onchange = async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        try {
+            const text = await file.text();
+            const importObj = JSON.parse(text);
+            
+            // Validate structure
+            if (!importObj.channels || !Array.isArray(importObj.channels)) {
+                throw new Error('Invalid file format: missing channels data');
+            }
+            
+            let importedCount = 0;
+            let skippedCount = 0;
+            
+            // Import each channel
+            for (const ch of importObj.channels) {
+                if (!ch.id || !ch.url) {
+                    skippedCount++;
+                    continue;
+                }
+                
+                // Check if already exists
+                if (AppState.channels.has(ch.id)) {
+                    skippedCount++;
+                    continue;
+                }
+                
+                // Add to state
+                AppState.channels.set(ch.id, ch);
+                importedCount++;
+            }
+            
+            // Refresh UI
+            await loadChannels();
+            renderSidebarChannelList();
+            renderDashboard();
+            
+            showToast(`Imported ${importedCount} channels${skippedCount > 0 ? ` (${skippedCount} skipped)` : ''}`, 'success');
+            console.log('[Import] Data imported:', { imported: importedCount, skipped: skippedCount });
+            
+        } catch (error) {
+            console.error('Import error:', error);
+            showToast('Failed to import data: ' + error.message, 'error');
+        }
+    };
+    
+    input.click();
 }
 
 // =============================================================================
