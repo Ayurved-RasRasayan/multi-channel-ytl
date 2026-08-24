@@ -577,25 +577,26 @@ const downloadManager = {
 const SANITIZE_PYTHON_SCRIPT = path.join(__dirname, '..', 'sanitize.py');
 
 /**
- * Fallback JavaScript sanitizer (used when Python is not available)
- * This is a simplified version of sanitize.py logic
+ * Fast JavaScript sanitizer for Windows filenames
+ * Keeps Unicode letters (Chinese, Arabic, Urdu, etc.) and sanitizes special chars.
+ * High-performance native JS replacement for sanitize.py to avoid child process spawn overhead.
  * @param {string} filename - Raw filename to sanitize
  * @returns {string} Sanitized filename (preserves case)
  */
 function fallbackSanitize(filename) {
-    if (!filename || filename.trim() === '') return 'unnamed';
+    if (!filename || !filename.trim()) return 'unnamed';
     
     let sanitized = filename;
     
     // Replace illegal Windows characters with '_'
     sanitized = sanitized.replace(/[\\/*?:"<>|]/g, '_');
     
-    // Replace special characters with '-'
-    // Keep: Unicode letters, numbers, spaces, '.', '_', '-', '(', ')'
-    sanitized = sanitized.replace(/[^\w\s\._\-()]/g, '-');
+    // Replace special characters with '-' using Unicode character property escapes
+    // Keep: ALL Unicode letters (\p{L}), Unicode numbers (\p{N}), spaces (\s), '.', '_', '-', '(', ')'
+    sanitized = sanitized.replace(/[^\p{L}\p{N}\s\._\-()]/gu, '-');
     
     // Strip leading/trailing spaces and dots
-    sanitized = sanitized.trim(' .');
+    sanitized = sanitized.trim().replace(/^[. ]+|[. ]+$/g, '');
     
     // Convert leading '_' or '-' to 'Z'
     if (sanitized && (sanitized[0] === '_' || sanitized[0] === '-')) {
@@ -617,49 +618,13 @@ function fallbackSanitize(filename) {
 }
 
 /**
- * Call sanitize.py via child_process for proper sanitization
- * Falls back to JS-based sanitizer if Python fails
+ * Fast native title sanitizer.
+ * Performs instant in-memory sanitization without launching external Python processes.
  * @param {string} rawTitle - Raw YouTube video title
- * @returns {string} Sanitized filename (preserves case, as per sanitize.py rules)
+ * @returns {string} Sanitized filename (preserves case, Unicode safe)
  */
 function sanitizeViaPython(rawTitle) {
-    try {
-        // Use spawnSync with stdin to safely pass Unicode/Urdu/Arabic text
-        // This avoids Windows command-line encoding issues with non-ASCII characters
-        const { spawnSync } = require('child_process');
-        
-        // Detect Python command based on OS (windows uses 'python' or 'py', not 'python3')
-        const pythonCmd = process.platform === 'win32' ? 
-            (process.env.PYTHON || 'python') : 'python3';
-        
-        const result = spawnSync(
-            pythonCmd,
-            [SANITIZE_PYTHON_SCRIPT, '--json'],
-            {
-                encoding: 'utf-8',
-                timeout: 5000,  // 5 second timeout
-                cwd: path.dirname(SANITIZE_PYTHON_SCRIPT),
-                stdio: ['pipe', 'pipe', 'pipe'],
-                input: rawTitle  // Pass filename via stdin (safe for Unicode!)
-            }
-        );
-        
-        if (result.error) throw result.error;
-        
-        const parsed = JSON.parse(result.stdout.trim());
-        
-        if (parsed.success && parsed.sanitized) {
-            console.log(`[sanitizeViaPython] ✅ "${rawTitle}" → "${parsed.sanitized}"`);
-            return parsed.sanitized;
-        } else {
-            throw new Error(parsed.error || 'Unknown error from sanitize.py');
-        }
-        
-    } catch (error) {
-        console.warn(`[sanitizeViaPython] ⚠️ Python failed for "${rawTitle}":`, error.message);
-        console.warn('[sanitizeViaPython] Using fallback JS sanitizer instead');
-        return fallbackSanitize(rawTitle);
-    }
+    return fallbackSanitize(rawTitle);
 }
 
 /**
