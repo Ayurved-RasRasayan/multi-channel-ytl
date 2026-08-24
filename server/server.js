@@ -1808,8 +1808,8 @@ app.post('/api/channels', async (req, res) => {
 let syncInProgress = new Set();  // Track channels currently being synced
 const SYNC_LOCK_TIMEOUT = 30000; // 30 second max lock duration (safety)
 
-// GET /api/channels/:id/sync-status - Check download status of all videos in a channel
-app.get('/api/channels/:id/sync-status', (req, res) => {
+// Sync status handler function
+const handleChannelSync = (req, res) => {
     const { id } = req.params;
     console.log('\n[Sync] GET /api/channels/' + id + '/sync-status');
     
@@ -1972,6 +1972,13 @@ app.get('/api/channels/:id/sync-status', (req, res) => {
         const downloadedCount = syncResults.filter(v => v.isDownloaded).length;
         const remainingCount = totalVideos - downloadedCount;
         
+        const videoStatuses = syncResults.map(v => ({
+            videoId: v.id,
+            exists: v.isDownloaded,
+            filename: v.fileInfo ? v.fileInfo.fileName : null,
+            filePath: v.fileInfo ? v.fileInfo.filePath : null
+        }));
+
         const response = {
             success: true,
             channelId: id,
@@ -1984,6 +1991,7 @@ app.get('/api/channels/:id/sync-status', (req, res) => {
                 percentage: totalVideos > 0 ? ((downloadedCount / totalVideos) * 100).toFixed(1) : 0
             },
             videos: syncResults,
+            videoStatuses: videoStatuses,
             scannedAt: new Date().toISOString()
         };
         
@@ -2036,7 +2044,12 @@ app.get('/api/channels/:id/sync-status', (req, res) => {
             error: 'Failed to check sync status: ' + error.message
         });
     }
-});
+};
+
+// Endpoints for sync status
+app.get('/api/channels/:id/sync-status', handleChannelSync);
+app.get('/api/channels/:id/sync', handleChannelSync);
+app.post('/api/channels/:id/sync', handleChannelSync);
 
 // DELETE /api/channels/:id - Remove a saved channel
 app.delete('/api/channels/:id', (req, res) => {
