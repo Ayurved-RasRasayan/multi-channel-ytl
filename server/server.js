@@ -2062,6 +2062,44 @@ app.get('/api/channels/:id/sync-status', handleChannelSync);
 app.get('/api/channels/:id/sync', handleChannelSync);
 app.post('/api/channels/:id/sync', handleChannelSync);
 
+// POST /api/channels/:id/stop - Stop/cancel all active and queued downloads for a channel
+app.post('/api/channels/:id/stop', (req, res) => {
+    const { id } = req.params;
+    console.log(`\n[Channel Action] ⏸️ STOP requested for channel downloads: ${id}`);
+
+    let stoppedCount = 0;
+
+    // 1. Remove from waiting queue if matching channelId
+    const initialQueueLength = downloadQueue.queue.length;
+    downloadQueue.queue = downloadQueue.queue.filter(job => {
+        const downloadObj = downloadManager.get(job.downloadId);
+        const matches = downloadObj && downloadObj.channelId === id;
+        if (matches) {
+            downloadManager.update(job.downloadId, { status: 'cancelled', cancelledAt: new Date().toISOString() });
+            stoppedCount++;
+        }
+        return !matches;
+    });
+
+    // 2. Cancel active downloads for matching channelId in downloadManager
+    const allDownloads = downloadManager.getAll();
+    allDownloads.forEach(d => {
+        if (d.channelId === id && (d.status === 'downloading' || d.status === 'queued')) {
+            downloadManager.update(d.id, { status: 'cancelled', cancelledAt: new Date().toISOString() });
+            stoppedCount++;
+        }
+    });
+
+    console.log(`[Channel Action] ✅ Stopped ${stoppedCount} downloads for channel ${id}`);
+
+    res.json({
+        success: true,
+        channelId: id,
+        stoppedCount: stoppedCount,
+        message: `Stopped ${stoppedCount} downloads for channel`
+    });
+});
+
 // DELETE /api/channels/:id - Remove a saved channel
 app.delete('/api/channels/:id', (req, res) => {
     const { id } = req.params;

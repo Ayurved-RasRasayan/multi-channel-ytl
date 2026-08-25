@@ -434,6 +434,7 @@
         /* Channel Item Actions */
         .channel-item-actions {
             display: flex;
+            flex-direction: column;
             gap: 4px;
             opacity: 0;
             transition: opacity 0.2s ease;
@@ -444,15 +445,15 @@
         }
         
         .channel-item-btn {
-            width: 26px;
-            height: 26px;
+            width: 24px;
+            height: 24px;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 12px;
+            font-size: 11px;
             transition: all 0.2s ease;
             padding: 0;
         }
@@ -465,6 +466,16 @@
         .channel-item-btn-delete:hover {
             background: #d32f2f;
             color: white;
+            transform: scale(1.1);
+        }
+
+        .channel-item-btn-stop {
+            background: #1976d2;
+            color: white;
+        }
+
+        .channel-item-btn-stop:hover {
+            background: #1565c0;
             transform: scale(1.1);
         }
         
@@ -2575,6 +2586,11 @@
                                     title="Remove channel from list">
                                 🗑
                             </button>
+                            <button class="channel-item-btn channel-item-btn-stop"
+                                    onclick="event.stopPropagation(); stopChannelDownloads('${channel.id}')"
+                                    title="Stop all downloads for this channel">
+                                ⏸
+                            </button>
                         </div>
                     </div>
                 `;
@@ -2677,6 +2693,53 @@
             
             showAlert(`Removed "${channel.name}" from list`, 'info', 3000);
             addLogEntry(`🗑️ Removed channel: ${channel.name}`, 'info');
+        }
+
+        /**
+         * Stop all active and queued downloads for a specific channel
+         * @param {string} channelId - ID of the channel to stop downloads for
+         */
+        async function stopChannelDownloads(channelId) {
+            const channel = channels.find(ch => ch.id === channelId);
+            const channelName = channel ? channel.name : channelId;
+
+            try {
+                console.log(`[Channel] ⏸️ Stopping all downloads for channel: ${channelName} (${channelId})`);
+
+                const response = await fetch(`${API_BASE}/api/channels/${channelId}/stop`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showAlert(`⏸️ Stopped ${result.stoppedCount} downloads for ${channelName}`, 'info', 3000);
+                    addLogEntry(`⏸️ Stopped ${result.stoppedCount} downloads for channel: ${channelName}`, 'info');
+                    refreshQueue();
+
+                    // Mark matching local video objects as cancelled
+                    if (channel && channel.videos) {
+                        channel.videos.forEach(v => {
+                            if (v.downloadStatus === 'downloading' || v.downloadStatus === 'queued') {
+                                v.downloadStatus = 'cancelled';
+                            }
+                        });
+                    }
+                    if (activeChannelId === channelId) {
+                        videos.forEach(v => {
+                            if (v.downloadStatus === 'downloading' || v.downloadStatus === 'queued') {
+                                v.downloadStatus = 'cancelled';
+                            }
+                        });
+                        renderVideos();
+                    }
+                } else {
+                    showAlert(`⚠️ Stop channel downloads failed: ${result.error}`, 'warning', 4000);
+                }
+            } catch (error) {
+                console.error('[Channel] Error stopping channel downloads:', error);
+                showAlert(`❌ Error stopping channel downloads: ${error.message}`, 'error', 4000);
+            }
         }
         
         /**
