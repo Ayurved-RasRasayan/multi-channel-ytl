@@ -1644,6 +1644,46 @@ app.get('/api/channels', (req, res) => {
     });
 });
 
+// GET /api/channels/:id - Return a specific channel by ID
+app.get('/api/channels/:id', (req, res) => {
+    const { id } = req.params;
+    console.log(`\n[Channels] GET /api/channels/${id} requested`);
+
+    if (savedChannels.has(id)) {
+        const channel = savedChannels.get(id);
+        res.json({
+            success: true,
+            channel: channel,
+            videos: channel.videos || []
+        });
+    } else {
+        res.status(404).json({
+            success: false,
+            error: 'Channel not found'
+        });
+    }
+});
+
+// GET /api/channels/:id/videos - Return videos for a specific channel
+app.get('/api/channels/:id/videos', (req, res) => {
+    const { id } = req.params;
+    console.log(`\n[Channels] GET /api/channels/${id}/videos requested`);
+
+    if (savedChannels.has(id)) {
+        const channel = savedChannels.get(id);
+        res.json({
+            success: true,
+            channel: channel,
+            videos: channel.videos || []
+        });
+    } else {
+        res.status(404).json({
+            success: false,
+            error: 'Channel not found'
+        });
+    }
+});
+
 // POST /api/channels - Add a new channel (THIS IS WHAT "LOAD CHANNEL" CALLS!)
 app.post('/api/channels', async (req, res) => {
     console.log('\n' + '='.repeat(80));
@@ -1666,6 +1706,10 @@ app.post('/api/channels', async (req, res) => {
         // ⭐ SMART URL CLEANUP - Fix doubled/malformed URLs
         let channelUrl = url || `https://www.youtube.com/@${channelId}`;
         
+        if (channelUrl.startsWith('@')) {
+            channelUrl = `https://www.youtube.com/${channelUrl}`;
+        }
+
         // Fix common URL issues:
         // 1. Double youtube.com: https://www.youtube.com/www.youtube.com/@user
         // 2. Missing protocol: www.youtube.com/@user
@@ -1681,7 +1725,11 @@ app.post('/api/channels', async (req, res) => {
             
             // Ensure protocol exists
             if (!channelUrl.startsWith('http://') && !channelUrl.startsWith('https://')) {
-                channelUrl = 'https://' + channelUrl.replace(/^\/\//, '');
+                if (channelUrl.startsWith('www.youtube.com') || channelUrl.startsWith('youtube.com')) {
+                    channelUrl = 'https://' + channelUrl;
+                } else {
+                    channelUrl = 'https://www.youtube.com/' + channelUrl;
+                }
                 console.log('[Channels] 🔧 Added missing protocol');
             }
             

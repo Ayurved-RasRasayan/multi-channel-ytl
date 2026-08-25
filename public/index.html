@@ -68,14 +68,56 @@
 
         /* ==================== MULTI-CHANNEL LAYOUT ==================== */
         
-        /* Top Section - Load Channel + Settings side by side */
+        /* Top Section - Load Channel + Settings side by side (Compact Height) */
         .top-section {
             display: grid;
             grid-template-columns: 1fr 380px;
-            gap: 15px;
-            margin-bottom: 15px;
+            gap: 10px;
+            margin-bottom: 10px;
         }
         
+        .top-section .card {
+            padding: 8px 12px;
+            margin-bottom: 0;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .top-section .card-header {
+            margin-bottom: 6px;
+            padding-bottom: 4px;
+        }
+
+        .top-section .card-title {
+            font-size: 0.95em;
+        }
+
+        .top-section .input-group {
+            margin-bottom: 0;
+            gap: 6px;
+        }
+
+        .top-section input[type="text"] {
+            padding: 5px 8px;
+            font-size: 12px;
+        }
+
+        .top-section button {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        .top-section .setting-group {
+            margin-bottom: 0;
+            padding: 0;
+            box-shadow: none;
+            background: transparent;
+        }
+
+        .top-section .setting-label {
+            margin-bottom: 4px;
+            font-size: 11px;
+        }
+
         @media (max-width: 1100px) {
             .top-section {
                 grid-template-columns: 1fr;
@@ -2100,14 +2142,6 @@
                                 💾 Save
                             </button>
                         </div>
-                        <div class="setting-info" id="folderInfo">
-                            Loading...
-                        </div>
-                    </div>
-
-                    <!-- Current Status -->
-                    <div class="setting-status" id="folderStatus">
-                        <span>ℹ️ Configure your download folder above</span>
                     </div>
                 </div>
             </div>
@@ -2385,6 +2419,7 @@
          * @param {Object} channelData - The channel object from API response
          */
         function addChannelToList(channelData) {
+            const channelVideos = channelData.videos || channelData.data?.videos || [];
             // Check if channel already exists (by ID or URL)
             const existingIndex = channels.findIndex(ch => 
                 ch.id === channelData.id || ch.url === channelData.url
@@ -2395,7 +2430,8 @@
                 channels[existingIndex] = {
                     ...channels[existingIndex],
                     ...channelData,
-                    videoCount: channelData.videos ? channelData.videos.length : 0
+                    videoCount: channelVideos.length || channels[existingIndex].videoCount || 0,
+                    videos: channelVideos.length ? channelVideos : (channels[existingIndex].videos || [])
                 };
             } else {
                 // Add new channel
@@ -2404,8 +2440,9 @@
                     name: channelData.name,
                     url: channelData.url,
                     handle: extractHandle(channelData.url || channelData.name),
-                    videoCount: channelData.videos ? channelData.videos.length : 0,
-                    data: channelData
+                    videoCount: channelVideos.length,
+                    data: channelData,
+                    videos: channelVideos
                 });
             }
             
@@ -2518,12 +2555,17 @@
             // Re-render channel list to update active state
             renderChannelList();
             
-            // ✅ OPTION B: Update UI to reflect NEW channel's selection state (don't clear!)
-            // The new channel's selections will be shown (preserved from before if they exist)
+            // Update UI to reflect NEW channel's selection state
             updateSelectedCount();
             
-            // Load videos for this channel
-            await loadChannelVideos(channelId);
+            // ⭐ INSTANTLY RENDER CACHED VIDEOS FROM MEMORY/LOCALSTORAGE (0ms delay)
+            const cachedVideos = channel.videos || (channel.data && channel.data.videos) || [];
+            if (cachedVideos.length > 0) {
+                videos = cachedVideos;
+                document.getElementById('videosCard').style.display = 'block';
+                updateChannelStats();
+                renderVideos();
+            }
             
             // Update "Select All" checkbox based on new channel's actual state
             const selection = getActiveSelection();
@@ -2539,6 +2581,9 @@
             closeMobileSidebar();
             
             addLogEntry(`📂 Switched to channel: ${channel.name}`, 'info');
+
+            // Non-blocking background fetch to sync/update videos if needed
+            loadChannelVideos(channelId).catch(err => console.warn('[SelectChannel] Background load:', err));
         }
         
         /**
@@ -2703,8 +2748,8 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    currentChannel = data.channel;
-                    videos = data.videos || [];
+                    currentChannel = data.channel || currentChannel;
+                    videos = data.videos || videos;
                     
                     console.log(`[Load Videos] Loaded ${videos.length} videos for channel ${channelId}`);
                     
@@ -2712,7 +2757,8 @@
                     const channelIndex = channels.findIndex(ch => ch.id === channelId);
                     if (channelIndex >= 0) {
                         channels[channelIndex].videoCount = videos.length;
-                        channels[channelIndex].data = currentChannel;
+                        channels[channelIndex].videos = videos;
+                        if (data.channel) channels[channelIndex].data = data.channel;
                         renderChannelList();
                     }
                     
@@ -4008,14 +4054,6 @@
                 
                 if (data.success) {
                     document.getElementById('downloadsDirInput').value = data.data.currentDownloadsDir || '';
-                    document.getElementById('folderInfo').innerHTML = `
-                        Path: ${data.data.resolvedPath || 'N/A'}<br>
-                        Exists: ${data.data.dirExists ? 'Yes' : 'No'}<br>
-                        Files: ${data.data.fileCount || 0}
-                    `;
-                    document.getElementById('folderStatus').innerHTML = `
-                        Current: <strong>${data.data.resolvedPath || 'Not set'}</strong>
-                    `;
                 }
             } catch (error) {
                 console.error('Error loading settings:', error);
