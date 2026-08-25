@@ -951,7 +951,7 @@
             gap: 8px;
             font-size: 11px;
             color: #666;
-            flex-shrink: 0;
+            width: 100%;
         }
 
         /* Status Badge - Compact */
@@ -3349,30 +3349,15 @@
             if (video.isDuplicate) extraBadges += `<span class="duplicate-badge">DUPE</span>`;
             if (video.hasZPrefix) extraBadges += `<span class="z-prefix-badge">Z-PFX</span>`;
             
-            // Progress bar for downloading (both inline next to video time & full bottom bar)
-            let progressBar = '';
+            // Inline progress bar next to video duration/time matching design
             let inlineProgressBar = '';
             if (video.downloadStatus === 'downloading' && video.progress !== undefined && video.progress !== null) {
                 const currentProgress = video.progress || 0;
                 const progressClass = currentProgress >= 100 ? 'complete' : 'active';
                 inlineProgressBar = `
-                    <span class="inline-progress-wrap" style="display: inline-flex; align-items: center; gap: 6px; margin-left: 6px;">
-                        <span class="progress-bar" style="width: 110px; height: 8px; display: inline-block; background: #e0e0e0; border-radius: 4px; overflow: hidden; vertical-align: middle;">
-                            <span class="progress-fill ${progressClass}" style="width: ${Math.min(currentProgress, 100)}%; height: 100%; display: block;"></span>
-                        </span>
-                        <span style="font-size: 11px; font-weight: 700; color: #1976d2;">${currentProgress}%</span>
-                    </span>
-                `;
-                progressBar = `
-                    <div class="progress-container">
-                        <div class="progress-bar">
-                            <div class="progress-fill ${progressClass}" style="width: ${Math.min(currentProgress, 100)}%"></div>
-                        </div>
-                        <div class="progress-details">
-                            <span class="progress-percent">${currentProgress}%</span>
-                            ${video.speed ? `<span class="progress-speed">@${video.speed}</span>` : ''}
-                            ${video.downloadedSize ? `<span class="progress-size">${video.downloadedSize}${video.totalSize ? '/' + video.totalSize : ''}</span>` : ''}
-                        </div>
+                    <div class="inline-progress-container" style="flex: 1; position: relative; height: 12px; background: #e0e0e0; border-radius: 6px; display: flex; align-items: center; margin-left: 6px; overflow: hidden;">
+                        <div class="inline-progress-fill ${progressClass}" style="width: ${Math.min(currentProgress, 100)}%; height: 100%; background: linear-gradient(90deg, #11998e 0%, #38ef7d 100%); border-radius: 6px; transition: width 0.3s ease;"></div>
+                        <span style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 13px; font-weight: 800; color: #2563eb; text-shadow: 0 0 2px rgba(255,255,255,0.9); z-index: 2; pointer-events: none;">${currentProgress}%</span>
                     </div>
                 `;
             }
@@ -3414,7 +3399,6 @@
                             ? `<button class="btn-primary btn-small" onclick="downloadVideo(${originalIndex})">⬇️</button>` 
                             : ''}
                     </div>
-                    ${progressBar}
                 </div>
             `;
         }
