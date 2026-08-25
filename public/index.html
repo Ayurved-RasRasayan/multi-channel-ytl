@@ -239,56 +239,60 @@
             gap: 6px;
         }
         
-        /* Channel Stats Bar in Sidebar */
+        /* Channel Stats Bar in Sidebar - 3 Badges Layout */
         .channel-stats-bar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-            padding: 10px 12px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 4px;
+            padding: 6px;
             background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
             border-radius: 8px;
             margin-bottom: 10px;
-            border: 2px solid #ddd;
+            border: 1px solid #ddd;
         }
-        
-        .channel-stats-info {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            font-weight: 600;
-            color: #555;
-        }
-        
-        .channel-stats-count {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 700;
-        }
-        
-        .btn-download-all-channels {
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-            color: white;
-            padding: 6px 12px;
+
+        .sidebar-badge-btn {
+            padding: 5px 2px;
             border: none;
             border-radius: 6px;
-            font-weight: 600;
-            font-size: 11px;
+            font-weight: 700;
+            font-size: 10px;
             cursor: pointer;
-            transition: all 0.3s;
+            transition: all 0.2s ease;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
             display: flex;
             align-items: center;
-            gap: 4px;
-            white-space: nowrap;
+            justify-content: center;
         }
-        
-        .btn-download-all-channels:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(17, 153, 142, 0.4);
+
+        .badge-no-channels {
+            background: #e3f2fd;
+            color: #1565c0;
+            border: 1px solid #bbdefb;
+            cursor: default;
+        }
+
+        .badge-sync-all {
+            background: linear-gradient(135deg, #00b09b 0%, #96c93d 100%);
+            color: white;
+        }
+
+        .badge-sync-all:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 176, 155, 0.3);
+        }
+
+        .badge-download-all {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+
+        .badge-download-all:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(17, 153, 142, 0.3);
         }
         
         /* Scrollable Channel List */
@@ -2166,13 +2170,15 @@
                         <h3 class="channel-list-title">📂 Channels</h3>
                     </div>
                     
-                    <!-- Channel Stats Bar: All count + Download All -->
+                    <!-- Channel Stats Bar: 3 Badges (No of Channels, Sync All, Download All) -->
                     <div class="channel-stats-bar" id="channelListStatsBar">
-                        <div class="channel-stats-info">
-                            <span>📊 All:</span>
-                            <span class="channel-stats-count" id="totalChannelsCount">0</span>
+                        <div class="sidebar-badge-btn badge-no-channels" title="Total number of channels">
+                            📺 Channels: <span id="totalChannelsCount" style="margin-left:2px;">0</span>
                         </div>
-                        <button class="btn-download-all-channels" onclick="downloadAllChannels()" title="Download videos from all channels">
+                        <button class="sidebar-badge-btn badge-sync-all" onclick="syncDownloadStatus()" title="Sync all channels">
+                            🔄 Sync All
+                        </button>
+                        <button class="sidebar-badge-btn badge-download-all" onclick="downloadAllChannels()" title="Download videos from all channels">
                             ⬇️ Download All
                         </button>
                     </div>
@@ -2519,9 +2525,6 @@
                 const isActive = channel.id === activeChannelId;
                 const channelVideos = channel.videos || (channel.data && channel.data.videos) || [];
                 const total = channelVideos.length || channel.videoCount || 0;
-                const downloaded = channelVideos.filter(v =>
-                    v.syncStatus === 'downloaded' || v.downloadStatus === 'completed' || v.downloadStatus === 'skipped'
-                ).length;
 
                 html += `
                     <div class="channel-item ${isActive ? 'active' : ''}" 
@@ -2530,9 +2533,6 @@
                         <div class="channel-item-icon">📺</div>
                         <div class="channel-item-content">
                             <div class="channel-item-name">${escapeHtml(channel.handle || channel.name)}</div>
-                            <div class="channel-badge-sub" style="font-size: 11px; margin-top: 2px;">
-                                <span class="stat-badge stat-downloaded" style="padding: 1px 6px; font-size: 10px;">✅ Downloaded: ${downloaded}/${total}</span>
-                            </div>
                             <div class="channel-item-meta" style="margin-top: 2px;">
                                 <span class="channel-item-videos">${total} videos</span>
                             </div>
