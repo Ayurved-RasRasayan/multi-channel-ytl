@@ -747,7 +747,38 @@
             transition: all 0.2s ease;
             position: relative;
             overflow: hidden;
-            height: 44px; /* Fixed height for single line */
+            min-height: 48px;
+            height: auto;
+        }
+
+        .downloaded-file-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #a5d6a7;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-top: 3px;
+        }
+
+        .downloaded-file-badge .file-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .downloaded-file-badge .file-size {
+            color: #1b5e20;
+            font-weight: 600;
+            flex-shrink: 0;
         }
 
         .video-item::before {
@@ -3273,26 +3304,21 @@
                 `;
             }
             
-            // File info for completed/skipped
-            let fileInfo = '';
-            if ((video.downloadStatus === 'completed' || video.downloadStatus === 'skipped') && video.filePath) {
-                fileInfo = `
-                    <div class="file-info">
-                        <span class="file-info-icon">💾</span>
-                        <div class="file-info-details">
-                            <span class="file-info-item">📁 ${escapeHtml(video.filePath.split('/').pop())}</span>
-                            ${video.fileSize ? `<span class="file-info-item">📏 ${video.fileSize}</span>` : ''}
-                        </div>
+            // Consolidated, elegant downloaded file badge
+            let fileBadge = '';
+            const isDoneObj = video.downloadStatus === 'completed' || video.downloadStatus === 'skipped' || video.syncStatus === 'downloaded';
+            if (isDoneObj) {
+                const fileNameToDisplay = video.renamedFilename || (video.filePath ? video.filePath.split(/[/\\]/).pop() : sanitizedTitle);
+                const fullPath = video.filePath || '';
+                fileBadge = `
+                    <div class="downloaded-file-badge" title="${escapeHtml(fullPath)}">
+                        <span class="file-icon">💾</span>
+                        <span class="file-name">${escapeHtml(fileNameToDisplay)}</span>
+                        ${video.fileSize ? `<span class="file-size">(${video.fileSize})</span>` : ''}
                     </div>
                 `;
             }
-            
-            // Renamed filename display
-            let renamedDisplay = '';
-            if (video.renamedFilename) {
-                renamedDisplay = `<div class="renamed-filename">💾 Saved as: ${escapeHtml(video.renamedFilename)}</div>`;
-            }
-            
+
             return `
                 <div class="video-item ${statusClass}" data-index="${originalIndex}">
                     <input type="checkbox" class="video-checkbox" ${isChecked ? 'checked' : ''} onchange="toggleVideoSelection(${originalIndex})">
@@ -3307,6 +3333,7 @@
                             ${formatNumber(video.viewCount) ? `👁 ${formatNumber(video.viewCount)}` : ''}
                             ${statusBadge}
                         </div>
+                        ${fileBadge}
                     </div>
                     <div class="video-actions">
                         ${!video.downloadStatus || video.downloadStatus === 'error' 
@@ -3314,8 +3341,6 @@
                             : ''}
                     </div>
                     ${progressBar}
-                    ${fileInfo}
-                    ${renamedDisplay}
                 </div>
             `;
         }
