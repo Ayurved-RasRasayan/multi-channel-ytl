@@ -1426,7 +1426,7 @@ app.post('/api/video/info', async (req, res) => {
 // Start download endpoint
 app.post('/api/download/start', async (req, res) => {
     try {
-        const { url, format, quality, title } = req.body;  // ⭐ Added title!
+        const { url, format, quality, title } = req.body;
         
         if (!url) {
             return res.status(400).json({ error: 'Video URL required' });
@@ -1439,40 +1439,20 @@ app.post('/api/download/start', async (req, res) => {
         const download = downloadManager.add({
             id: downloadId,
             url: url,
-            title: title || null,  // ⭐ ADD TITLE FOR RENAME!
+            title: title || null,
             filename: filename,
             outputPath: outputPath,
-            status: 'downloading',
+            status: 'queued',
             progress: 0,
-            startTime: Date.now()
+            createdAt: new Date().toISOString()
         });
 
-        // Start download
-        executeDownload(
-            downloadId,
-            url,
-            outputPath,
-            format || 'best',
-            (progress) => {
-                download.progress = progress.percent;
-                download.downloaded = progress.downloaded;
-                download.total = progress.total;
-            },
-            (result) => {
-                download.status = 'completed';
-                download.endTime = Date.now();
-            },
-            (error) => {
-                download.status = 'error';
-                download.error = error;
-                download.endTime = Date.now();
-            }
-        );
+        downloadQueue.enqueue(downloadId, url, outputPath, title || `video_${downloadId}`);
 
         res.json({
             success: true,
             downloadId: downloadId,
-            message: 'Download started'
+            message: 'Download queued'
         });
 
     } catch (error) {
@@ -2319,30 +2299,18 @@ const downloadQueue = {
                 return;
             }
             
-            console.log(`[Download Queue] ▶️ Starting next in queue: ${nextJob.videoTitle?.substring(0, 30)}...`);
+            // Reserve slot immediately to strictly enforce maxConcurrent limit
+            this.activeJobs.push(nextJob);
+
+            console.log(`[Download Queue] ▶️ Reserved slot and starting next in queue: ${nextJob.videoTitle?.substring(0, 30)}...`);
             console.log(`[Download Queue] Remaining in queue: ${this.queue.length}`);
             
-            // ⭐ 5-SECOND DELAY BETWEEN DOWNLOADS (as requested)
-            const delaySeconds = 5;
-            console.log(`\n[Download Queue] ⏳ Waiting ${delaySeconds} seconds before starting next download...`);
-            console.log(`[Download Queue] ${'─'.repeat(50)}`);
-            
-            let countdown = delaySeconds;
-            const countdownInterval = setInterval(() => {
-                countdown--;
-                if (countdown > 0) {
-                    console.log(`[Download Queue] ⏱️  ...${countdown} seconds remaining...`);
-                } else {
-                    console.log(`[Download Queue] ✅ Delay complete! Starting: ${nextJob.videoTitle?.substring(0, 40)}...`);
-                    console.log(`[Download Queue] ${'─'.repeat(50)}\n`);
-                    clearInterval(countdownInterval);
-                }
-            }, 1000);
-            
-            setTimeout(() => {
-                clearInterval(countdownInterval); // Ensure cleanup
-                this.executeJob(nextJob);
-            }, delaySeconds * 1000);
+            // Execute next job immediately to maintain active slots
+            const resIdx = this.activeJobs.findIndex(j => j.downloadId === nextJob.downloadId);
+            if (resIdx !== -1) {
+                this.activeJobs.splice(resIdx, 1); // remove reservation before executeJob adds it
+            }
+            this.executeJob(nextJob);
             
         } else if (this.queue.length === 0 && this.activeJobs.length === 0) {
             console.log('[Download Queue] 🎉 All downloads complete! Queue empty.');
@@ -3174,6 +3142,8 @@ app.post('/api/download/batch', async (req, res) => {
                 createdAt: new Date().toISOString()
             });
 
+            downloadQueue.enqueue(downloadId, videoUrl, outputPath, videoTitle);
+
             queuedCount++;
             results.push({
                 index: i,
@@ -3185,31 +3155,21 @@ app.post('/api/download/batch', async (req, res) => {
             });
         }
 
-        // ⭐ NOTE: Downloads will be processed sequentially by processBatchSequentially()
-
         console.log(`\n[Batch Download] ✅ Batch processing complete:`);
         console.log(`   Queued: ${queuedCount}`);
-        console.log(`   Skipped (already exist): ${skippedCount}`);
-        console.log(`   Errors: ${errorCount}`);
-        console.log(`   ⭐ Mode: Sequential (download → rename → 5s delay → next)`);
 
         res.json({
             success: true,
-            message: `Batch download initiated: ${queuedCount} videos will download sequentially (5s between each)`,
+            message: `Batch download initiated: ${queuedCount} videos added to queue (max 2 concurrent)`,
             summary: {
                 total: videos.length,
                 queued: queuedCount,
                 skipped: skippedCount,
-                errors: errorCount,
-                mode: 'sequential'  // ⭐ NEW: Indicate sequential mode
+                errors: errorCount
             },
             results: results,
             batchId: uuidv4()
         });
-
-        // ⭐ FIX: Process downloads SEQUENTIALLY (not parallel with setTimeout)
-        // Video 1: Download → Rename complete → Wait 5s → Video 2: Download → ...
-        processBatchSequentially(videos, results, outputDir, format, quality, channelId);
 
     } catch (error) {
         console.error('[Batch Download] ❌ Error:', error.message);
@@ -3463,7 +3423,7 @@ async function processSequentialQueue(outputDir, format, quality, channelId) {
                 outputPath: outputPath,
                 format: format || 'best',
                 quality: quality || 'lowest',
-                status: 'downloading',  // Set to downloading immediately (it's the only active one)
+                status: 'queued',
                 progress: 0,
                 createdAt: new Date().toISOString()
             });
@@ -3471,8 +3431,19 @@ async function processSequentialQueue(outputDir, format, quality, channelId) {
             console.log(`[Sequential Queue] Job created: ${downloadId}`);
             console.log(`[Sequential Queue] Output: ${outputPath}`);
 
-            // ⭐ KEY: AWAIT this download to complete before continuing
-            await executeSmartDownload(downloadId, video.url, outputPath, video.title);
+            // Enqueue via global queue system to guarantee 2-slot limit
+            downloadQueue.enqueue(downloadId, video.url, outputPath, video.title);
+
+            // Wait until job is completed or errored out in downloadManager
+            await new Promise((resolve) => {
+                const checkInterval = setInterval(() => {
+                    const currentDl = downloadManager.get(downloadId);
+                    if (!currentDl || currentDl.status === 'completed' || currentDl.status === 'error' || currentDl.status === 'cancelled') {
+                        clearInterval(checkInterval);
+                        resolve();
+                    }
+                }, 500);
+            });
 
             // Mark as completed in results
             sequentialQueue.results.push({
