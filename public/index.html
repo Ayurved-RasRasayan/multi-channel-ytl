@@ -2269,6 +2269,9 @@
                         <div class="batch-info">
                             <label><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> Select All</label>
                             <span id="selectedCount">0 selected</span>
+                            <span class="stat-badge stat-downloaded" id="downloadRatioBadge" style="cursor: pointer;" onclick="setSyncFilter('downloaded')">
+                                ✅ Downloaded: <strong id="downloadRatioText">0/0</strong>
+                            </span>
                         </div>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                             <button class="btn-success btn-small" onclick="downloadSelected()" id="downloadSelectedBtn" disabled>
@@ -2805,6 +2808,12 @@
                 <button class="stat-badge stat-missing ${currentSyncFilter === 'remaining' ? 'active' : ''}" style="cursor:pointer;" onclick="setSyncFilter('remaining')">🔴 ${remaining}</button>
             `;
             
+            // Update downloaded/total ratio badge in batch actions row
+            const ratioText = document.getElementById('downloadRatioText');
+            if (ratioText) {
+                ratioText.textContent = `${downloaded}/${total}`;
+            }
+
             // Also update sync stats if visible
             const syncTotal = document.getElementById('syncTotal');
             if (syncTotal) {
