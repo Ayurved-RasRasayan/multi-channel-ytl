@@ -2743,9 +2743,9 @@
             const percentage = total > 0 ? Math.round((downloaded / total) * 100) : 0;
             
             document.getElementById('channelStats').innerHTML = `
-                <span class="stat-badge stat-total">📊 All: ${total}</span>
-                <span class="stat-badge stat-downloaded">✅ ${downloaded}</span>
-                <span class="stat-badge stat-missing">🔴 ${remaining}</span>
+                <button class="stat-badge stat-total ${currentSyncFilter === 'all' ? 'active' : ''}" style="cursor:pointer;" onclick="setSyncFilter('all')">📊 All: ${total}</button>
+                <button class="stat-badge stat-downloaded ${currentSyncFilter === 'downloaded' ? 'active' : ''}" style="cursor:pointer;" onclick="setSyncFilter('downloaded')">✅ ${downloaded}</button>
+                <button class="stat-badge stat-missing ${currentSyncFilter === 'remaining' ? 'active' : ''}" style="cursor:pointer;" onclick="setSyncFilter('remaining')">🔴 ${remaining}</button>
             `;
             
             // Also update sync stats if visible
@@ -3026,13 +3026,21 @@
         function renderVideos() {
             const container = document.getElementById('videoList');
             
-            // Apply sync filter if available
+            // Apply filter based on downloadStatus or syncStatus
             let videosToRender = videos;
-            if (syncData && currentSyncFilter !== 'all') {
+            if (currentSyncFilter !== 'all') {
                 if (currentSyncFilter === 'downloaded') {
-                    videosToRender = videos.filter(v => v.syncStatus === 'downloaded');
+                    videosToRender = videos.filter(v =>
+                        v.syncStatus === 'downloaded' ||
+                        v.downloadStatus === 'completed' ||
+                        v.downloadStatus === 'skipped'
+                    );
                 } else if (currentSyncFilter === 'remaining') {
-                    videosToRender = videos.filter(v => v.syncStatus === 'new');
+                    videosToRender = videos.filter(v =>
+                        (v.syncStatus === 'new' || !v.syncStatus) &&
+                        v.downloadStatus !== 'completed' &&
+                        v.downloadStatus !== 'skipped'
+                    );
                 }
             }
             
@@ -3273,11 +3281,7 @@
                     document.getElementById('syncPercentage').textContent = percentage;
                     
                     // Also update main stats
-                    document.getElementById('channelStats').innerHTML = `
-                        <span class="stat-badge stat-total">📊 All: ${total}</span>
-                        <span class="stat-badge stat-downloaded">✅ ${downloaded}</span>
-                        <span class="stat-badge stat-missing">🔴 ${remaining}</span>
-                    `;
+                    updateChannelStats();
                     
                     renderVideos();
                     
@@ -3305,9 +3309,13 @@
         function setSyncFilter(filter) {
             currentSyncFilter = filter;
             
-            // Update button states
+            // Update sync filter button states if present
             document.querySelectorAll('.sync-filter-btn').forEach(btn => btn.classList.remove('active'));
-            document.getElementById(`btnFilter${filter.charAt(0).toUpperCase() + filter.slice(1)}`).classList.add('active');
+            const filterBtn = document.getElementById(`btnFilter${filter.charAt(0).toUpperCase() + filter.slice(1)}`);
+            if (filterBtn) filterBtn.classList.add('active');
+
+            // Update main stat badges
+            updateChannelStats();
             
             renderVideos();
         }
