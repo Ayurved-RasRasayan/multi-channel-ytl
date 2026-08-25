@@ -1159,8 +1159,9 @@ patch_server() {
     if grep -q "--cookies-from-browser" "$SERVER_JS" 2>/dev/null && [ -f "$COOKIES_FILE" ]; then
         log "Patching server to use cookies file instead of browser..."
         
-        # Create a sed script to replace browser cookies with file cookies
-        if sed -i 's/--cookies-from-browser edge/--cookies '"$COOKIES_FILE"'/g' "$SERVER_JS" 2>/dev/null; then
+        # Create a sed script to replace browser cookies with file cookies safely
+        local SAFE_COOKIES_FILE=$(echo "$COOKIES_FILE" | sed 's/[\/&]/\\&/g')
+        if sed -i 's/--cookies-from-browser [^"'\'' ]*/--cookies '"$SAFE_COOKIES_FILE"'/g' "$SERVER_JS" 2>/dev/null; then
             ok "✅ Server patched to use cookies file!"
         else
             warn "Could not patch server (sed failed)"
