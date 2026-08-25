@@ -2213,9 +2213,16 @@
                 <!-- Videos List Card -->
                 <div class="video-card" id="videosCard" style="display: none;">
                     <div class="video-card-header">
-                        <h2 class="video-card-title">
-                            📹 Videos <span class="current-channel-name" id="currentChannelTitle">@SelectChannel</span>
-                        </h2>
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                            <h2 class="video-card-title">
+                                📹 Videos <span class="current-channel-name" id="currentChannelTitle">@SelectChannel</span>
+                            </h2>
+                            <div id="headerChannelBadgeContainer">
+                                <span class="stat-badge stat-downloaded" style="font-size: 11px; padding: 2px 8px;">
+                                    ✅ Downloaded: <strong id="headerDownloadRatioText">0/0</strong>
+                                </span>
+                            </div>
+                        </div>
                         <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                             <button class="btn-sync" id="syncBtn" onclick="syncDownloadStatus()">
                                 <span id="syncBtnIcon">🔄</span>
@@ -2510,6 +2517,12 @@
             let html = '';
             channels.forEach(channel => {
                 const isActive = channel.id === activeChannelId;
+                const channelVideos = channel.videos || (channel.data && channel.data.videos) || [];
+                const total = channelVideos.length || channel.videoCount || 0;
+                const downloaded = channelVideos.filter(v =>
+                    v.syncStatus === 'downloaded' || v.downloadStatus === 'completed' || v.downloadStatus === 'skipped'
+                ).length;
+
                 html += `
                     <div class="channel-item ${isActive ? 'active' : ''}" 
                          data-channel-id="${channel.id}" 
@@ -2517,8 +2530,11 @@
                         <div class="channel-item-icon">📺</div>
                         <div class="channel-item-content">
                             <div class="channel-item-name">${escapeHtml(channel.handle || channel.name)}</div>
-                            <div class="channel-item-meta">
-                                <span class="channel-item-videos">${channel.videoCount || 0} videos</span>
+                            <div class="channel-badge-sub" style="font-size: 11px; margin-top: 2px;">
+                                <span class="stat-badge stat-downloaded" style="padding: 1px 6px; font-size: 10px;">✅ Downloaded: ${downloaded}/${total}</span>
+                            </div>
+                            <div class="channel-item-meta" style="margin-top: 2px;">
+                                <span class="channel-item-videos">${total} videos</span>
                             </div>
                         </div>
                         <span class="channel-active-indicator">◀</span>
@@ -2808,10 +2824,14 @@
                 <button class="stat-badge stat-missing ${currentSyncFilter === 'remaining' ? 'active' : ''}" style="cursor:pointer;" onclick="setSyncFilter('remaining')">🔴 ${remaining}</button>
             `;
             
-            // Update downloaded/total ratio badge in batch actions row
+            // Update downloaded/total ratio badges
             const ratioText = document.getElementById('downloadRatioText');
             if (ratioText) {
                 ratioText.textContent = `${downloaded}/${total}`;
+            }
+            const headerRatioText = document.getElementById('headerDownloadRatioText');
+            if (headerRatioText) {
+                headerRatioText.textContent = `${downloaded}/${total}`;
             }
 
             // Also update sync stats if visible
@@ -2822,6 +2842,8 @@
                 document.getElementById('syncRemaining').textContent = remaining;
                 document.getElementById('syncPercentage').textContent = percentage;
             }
+
+            renderChannelList();
         }
 
         // ==================== LOGGING SYSTEM ====================
@@ -3315,82 +3337,73 @@
         // ==================== SYNC FUNCTIONS ====================
         
         async function syncDownloadStatus() {
-            if (!currentChannel) {
-                showAlert('Please load a channel first', 'warning');
-                return;
-            }
-            
             const btn = document.getElementById('syncBtn');
             const icon = document.getElementById('syncBtnIcon');
             const text = document.getElementById('syncBtnText');
             
-            btn.disabled = true;
-            icon.innerHTML = '<span class="sync-spinner"></span>';
-            text.textContent = 'Syncing...';
+            if (btn) {
+                btn.disabled = true;
+                if (icon) icon.innerHTML = '<span class="sync-spinner"></span>';
+                if (text) text.textContent = 'Syncing All...';
+            }
             
-            addLogEntry('🔄 Starting sync check...', 'info');
+            addLogEntry('🔄 Starting sync check for all channels...', 'info');
             
             try {
-                const response = await fetch(`${API_BASE}/api/channels/${currentChannel.id}/sync`, {
+                const response = await fetch(`${API_BASE}/api/channels/sync-all`, {
                     method: 'POST'
                 });
                 
                 const data = await response.json();
                 
-                if (data.success) {
-                    syncData = data;
-                    
-                    // Update video sync status
-                    if (data.videoStatuses) {
-                        data.videoStatuses.forEach(status => {
-                            const video = videos.find(v => v.id === status.videoId || v.videoId === status.videoId);
-                            if (video) {
-                                video.syncStatus = status.exists ? 'downloaded' : 'new';
-                                if (status.filename) {
-                                    video.finalFilename = status.filename;
-                                    video.filePath = status.filePath;
-                                }
+                if (data.success && data.results) {
+                    Object.keys(data.results).forEach(channelId => {
+                        const channelResult = data.results[channelId];
+                        const channelObj = channels.find(ch => ch.id === channelId);
+
+                        if (channelObj) {
+                            const targetVideos = channelObj.videos || (channelObj.data && channelObj.data.videos) || [];
+                            if (channelResult.videoStatuses) {
+                                channelResult.videoStatuses.forEach(status => {
+                                    const video = targetVideos.find(v => (v.id || v.videoId) === status.videoId);
+                                    if (video) {
+                                        video.syncStatus = status.exists ? 'downloaded' : 'new';
+                                        if (status.filename) {
+                                            video.finalFilename = status.filename;
+                                            video.filePath = status.filePath;
+                                        }
+                                    }
+                                });
                             }
-                        });
+                        }
+                    });
+
+                    if (currentChannel && data.results[currentChannel.id]) {
+                        syncData = data.results[currentChannel.id];
+                        document.getElementById('syncStatsBar').style.display = 'flex';
                     }
-                    
-                    // Show sync stats bar
-                    document.getElementById('syncStatsBar').style.display = 'flex';
-                    
-                    // Update counts
-                    const total = videos.length;
-                    const downloaded = videos.filter(v => v.syncStatus === 'downloaded').length;
-                    const remaining = total - downloaded;
-                    const percentage = total > 0 ? Math.round((downloaded / total) * 100) : 0;
-                    
-                    document.getElementById('syncTotal').textContent = total;
-                    document.getElementById('syncDownloaded').textContent = downloaded;
-                    document.getElementById('syncRemaining').textContent = remaining;
-                    document.getElementById('syncPercentage').textContent = percentage;
-                    
-                    // Also update main stats
+
+                    renderChannelList();
                     updateChannelStats();
-                    
                     renderVideos();
                     
-                    showAlert(`✅ Sync complete: ${downloaded}/${total} downloaded (${percentage}%)`, 'success', 4000);
-                    addLogEntry(`✅ Sync complete: ${downloaded}/${total} videos downloaded (${percentage}%)`, 'success');
+                    showAlert(`✅ Sync complete for all channels`, 'success', 4000);
+                    addLogEntry(`✅ Sync complete for all channels`, 'success');
                     
-                    // Start auto-refresh timer
                     startSyncTimer();
-                    
                 } else {
-                    throw new Error(data.error || 'Sync failed');
+                    throw new Error(data.error || 'Sync all failed');
                 }
-                
             } catch (error) {
-                console.error('[Sync] Error:', error);
+                console.error('[Sync All] Error:', error);
                 showAlert(`❌ Sync failed: ${error.message}`, 'error', 5000);
                 addLogEntry(`❌ Sync failed: ${error.message}`, 'error');
             } finally {
-                btn.disabled = false;
-                icon.textContent = '🔄';
-                text.textContent = 'Sync Status';
+                if (btn) {
+                    btn.disabled = false;
+                    if (icon) icon.textContent = '🔄';
+                    if (text) text.textContent = 'Sync Status';
+                }
             }
         }
         

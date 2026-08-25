@@ -2059,6 +2059,90 @@ const handleChannelSync = (req, res) => {
     }
 };
 
+// Endpoint to sync all channels at once
+app.post('/api/channels/sync-all', (req, res) => {
+    console.log('\n[Sync All] POST /api/channels/sync-all requested');
+    try {
+        const channelSyncResults = {};
+        for (const [id, channel] of savedChannels.entries()) {
+            const videos = channel.videos || [];
+            const channelDir = getChannelDownloadDir(channel.name);
+            let downloadedFiles = [];
+            if (fs.existsSync(channelDir)) {
+                try {
+                    downloadedFiles = fs.readdirSync(channelDir)
+                        .filter(file => file.toLowerCase().endsWith('.mp4'))
+                        .map(file => ({
+                            name: file,
+                            path: path.join(channelDir, file),
+                            size: fs.statSync(path.join(channelDir, file)).size,
+                            modifiedAt: fs.statSync(path.join(channelDir, file)).mtime.toISOString()
+                        }));
+                } catch (err) {
+                    console.error(`[Sync All] Error reading ${channelDir}:`, err.message);
+                }
+            }
+
+            const actualFileSet = new Set(downloadedFiles.map(f => f.name.toLowerCase()));
+            const consumedFiles = new Set();
+
+            const syncResults = videos.map((video) => {
+                const expectedFilename = (video.finalFilename || '').toLowerCase();
+                const fileExists = actualFileSet.has(expectedFilename);
+                const isDownloaded = fileExists && !consumedFiles.has(expectedFilename);
+                let fileInfo = null;
+                if (isDownloaded) {
+                    consumedFiles.add(expectedFilename);
+                    const matchingFile = downloadedFiles.find(f => f.name.toLowerCase() === expectedFilename);
+                    if (matchingFile) {
+                        fileInfo = {
+                            fileName: matchingFile.name,
+                            filePath: matchingFile.path,
+                            fileSize: matchingFile.size
+                        };
+                    }
+                }
+                return {
+                    id: video.id || video.videoId,
+                    isDownloaded: isDownloaded,
+                    fileInfo: fileInfo
+                };
+            });
+
+            const total = syncResults.length;
+            const downloaded = syncResults.filter(v => v.isDownloaded).length;
+
+            channelSyncResults[id] = {
+                channelId: id,
+                channelName: channel.name,
+                statistics: {
+                    total: total,
+                    downloaded: downloaded,
+                    remaining: total - downloaded
+                },
+                videoStatuses: syncResults.map(v => ({
+                    videoId: v.id,
+                    exists: v.isDownloaded,
+                    filename: v.fileInfo ? v.fileInfo.fileName : null,
+                    filePath: v.fileInfo ? v.fileInfo.filePath : null
+                }))
+            };
+        }
+
+        res.json({
+            success: true,
+            results: channelSyncResults,
+            syncedAt: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('[Sync All] Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to sync all channels: ' + error.message
+        });
+    }
+});
+
 // Endpoints for sync status
 app.get('/api/channels/:id/sync-status', handleChannelSync);
 app.get('/api/channels/:id/sync', handleChannelSync);
