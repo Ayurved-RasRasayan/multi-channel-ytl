@@ -2940,13 +2940,19 @@
                 container.innerHTML = '<div class="log-entry"><span class="log-info">Waiting for server logs...</span></div>';
                 return;
             }
+
+            let hasFinishedDownloadLog = false;
             
             const newHtml = logs.map(log => {
                 const time = new Date(log.time).toLocaleTimeString();
+                const msg = log.message || '';
+                if (msg.includes('Downloaded') || msg.includes('Completed') || msg.includes('finished') || msg.includes('Saved as')) {
+                    hasFinishedDownloadLog = true;
+                }
                 return `
                     <div class="log-entry">
                         <span class="log-time">${time}</span>
-                        <span class="log-${log.type}">${escapeHtml(log.message.substring(0, 200))}</span>
+                        <span class="log-${log.type}">${escapeHtml(msg.substring(0, 200))}</span>
                     </div>
                 `;
             }).join('');
@@ -2955,6 +2961,10 @@
                 container.innerHTML = newHtml;
             } else {
                 container.insertAdjacentHTML('beforeend', newHtml);
+            }
+
+            if (hasFinishedDownloadLog) {
+                refreshQueue();
             }
             
             // Scroll inner container to bottom (ONLY scroll now)
@@ -3758,7 +3768,13 @@
                                 (v.title && v.title === item.title)
                             );
                             if (video) {
-                                if (item.isActive) {
+                                if (item.status === 'completed' || item.progress >= 100) {
+                                    video.downloadStatus = 'completed';
+                                    video.syncStatus = 'downloaded';
+                                } else if (item.status === 'skipped') {
+                                    video.downloadStatus = 'skipped';
+                                    video.syncStatus = 'downloaded';
+                                } else if (item.isActive) {
                                     video.downloadStatus = 'downloading';
                                     video.progress = item.progress || 0;
                                     video.speed = item.speed;
@@ -3769,6 +3785,7 @@
                         });
                     }
                     
+                    updateChannelStats();
                     renderVideos();
                 }
             } catch (error) {
