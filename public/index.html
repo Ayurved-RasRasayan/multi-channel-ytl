@@ -539,8 +539,12 @@
         .video-card {
             background: white;
             border-radius: 12px;
-            padding: 18px;
+            padding: 16px;
             box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            max-height: calc(100vh - 120px);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
         }
         
         .video-card-header {
