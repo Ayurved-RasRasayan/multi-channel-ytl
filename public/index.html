@@ -2762,7 +2762,20 @@
             let errorCount = 0;
 
             for (const ch of channels) {
-                const chVideos = ch.videos || (ch.data && ch.data.videos) || [];
+                let chVideos = ch.videos || (ch.data && ch.data.videos) || [];
+                if (!chVideos || chVideos.length === 0) {
+                    try {
+                        const vRes = await fetch(`${API_BASE}/api/channels/${ch.id}/videos`);
+                        const vData = await vRes.json();
+                        if (vData.success && vData.videos) {
+                            chVideos = vData.videos;
+                            ch.videos = vData.videos;
+                        }
+                    } catch (e) {
+                        console.warn('[downloadAllChannels] Could not fetch videos for channel', ch.id, e);
+                    }
+                }
+
                 const remaining = chVideos.filter(v =>
                     v.syncStatus !== 'downloaded' &&
                     v.downloadStatus !== 'completed' &&
@@ -4337,17 +4350,39 @@
             }
         }
         
-        function loadSavedChannels() {
+        async function loadSavedChannels() {
+            try {
+                const response = await fetch(`${API_BASE}/api/channels`);
+                const data = await response.json();
+                if (data.success && Array.isArray(data.channels) && data.channels.length > 0) {
+                    channels = data.channels.map(ch => ({
+                        id: ch.id,
+                        name: ch.name,
+                        url: ch.url,
+                        handle: extractHandle(ch.url || ch.name),
+                        videoCount: ch.videoCount || (ch.videos ? ch.videos.length : 0),
+                        data: ch,
+                        videos: ch.videos || []
+                    }));
+                    renderChannelList();
+
+                    const savedActive = localStorage.getItem('ytl_active_channel');
+                    const targetId = (savedActive && channels.find(ch => ch.id === savedActive)) ? savedActive : channels[0].id;
+                    selectChannel(targetId);
+                    return;
+                }
+            } catch (e) {
+                console.warn('[loadSavedChannels] Could not fetch channels from server:', e);
+            }
+
             try {
                 const saved = localStorage.getItem('ytl_channels');
                 if (saved) {
                     channels = JSON.parse(saved);
                     renderChannelList();
                     
-                    // Restore active channel
                     const savedActive = localStorage.getItem('ytl_active_channel');
                     if (savedActive && channels.find(ch => ch.id === savedActive)) {
-                        // Don't auto-load, just mark as active in UI
                         activeChannelId = savedActive;
                         const channel = channels.find(ch => ch.id === savedActive);
                         if (channel) {
@@ -4357,7 +4392,7 @@
                     }
                 }
             } catch (e) {
-                console.warn('Could not load saved channels:', e);
+                console.warn('Could not load saved channels from localStorage:', e);
             }
         }
 
