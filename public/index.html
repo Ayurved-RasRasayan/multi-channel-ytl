@@ -3286,17 +3286,27 @@
             if (video.isDuplicate) extraBadges += `<span class="duplicate-badge">DUPE</span>`;
             if (video.hasZPrefix) extraBadges += `<span class="z-prefix-badge">Z-PFX</span>`;
             
-            // Progress bar for downloading
+            // Progress bar for downloading (both inline next to video time & full bottom bar)
             let progressBar = '';
-            if (video.downloadStatus === 'downloading' && video.progress) {
-                const progressClass = video.progress >= 100 ? 'complete' : 'active';
+            let inlineProgressBar = '';
+            if (video.downloadStatus === 'downloading' && video.progress !== undefined && video.progress !== null) {
+                const currentProgress = video.progress || 0;
+                const progressClass = currentProgress >= 100 ? 'complete' : 'active';
+                inlineProgressBar = `
+                    <span class="inline-progress-wrap" style="display: inline-flex; align-items: center; gap: 6px; margin-left: 6px;">
+                        <span class="progress-bar" style="width: 110px; height: 8px; display: inline-block; background: #e0e0e0; border-radius: 4px; overflow: hidden; vertical-align: middle;">
+                            <span class="progress-fill ${progressClass}" style="width: ${Math.min(currentProgress, 100)}%; height: 100%; display: block;"></span>
+                        </span>
+                        <span style="font-size: 11px; font-weight: 700; color: #1976d2;">${currentProgress}%</span>
+                    </span>
+                `;
                 progressBar = `
                     <div class="progress-container">
                         <div class="progress-bar">
-                            <div class="progress-fill ${progressClass}" style="width: ${Math.min(video.progress, 100)}%"></div>
+                            <div class="progress-fill ${progressClass}" style="width: ${Math.min(currentProgress, 100)}%"></div>
                         </div>
                         <div class="progress-details">
-                            <span class="progress-percent">${video.progress}%</span>
+                            <span class="progress-percent">${currentProgress}%</span>
                             ${video.speed ? `<span class="progress-speed">@${video.speed}</span>` : ''}
                             ${video.downloadedSize ? `<span class="progress-size">${video.downloadedSize}${video.totalSize ? '/' + video.totalSize : ''}</span>` : ''}
                         </div>
@@ -3332,6 +3342,7 @@
                             ${formatDuration(video.duration)}
                             ${formatNumber(video.viewCount) ? `👁 ${formatNumber(video.viewCount)}` : ''}
                             ${statusBadge}
+                            ${inlineProgressBar}
                         </div>
                         ${fileBadge}
                     </div>
