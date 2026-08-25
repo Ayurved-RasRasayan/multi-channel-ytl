@@ -466,11 +466,12 @@ try {
 }
 
 // =============================================================================
-// PERSISTENT DATABASE STORAGE
+// PERSISTENT DATABASE STORAGE & MASTER SYNC TRACKING
 // =============================================================================
 
 const DB_FILE = path.join(__dirname, 'db_channels.json');
 const savedChannels = new Map();
+let initialDiskSyncDone = false;
 
 function loadDatabase() {
     try {
@@ -1851,37 +1852,89 @@ app.post('/api/channels', async (req, res) => {
 let syncInProgress = new Set();  // Track channels currently being synced
 const SYNC_LOCK_TIMEOUT = 30000; // 30 second max lock duration (safety)
 
+// Helper to perform master disk scan for a given channel
+function performDiskScanForChannel(channel) {
+    const videos = channel.videos || [];
+    const channelDir = getChannelDownloadDir(channel.name);
+    let downloadedFiles = [];
+    if (fs.existsSync(channelDir)) {
+        try {
+            downloadedFiles = fs.readdirSync(channelDir)
+                .filter(file => file.toLowerCase().endsWith('.mp4'))
+                .map(file => ({
+                    name: file,
+                    path: path.join(channelDir, file),
+                    size: fs.statSync(path.join(channelDir, file)).size,
+                    modifiedAt: fs.statSync(path.join(channelDir, file)).mtime.toISOString()
+                }));
+        } catch (err) {
+            console.error(`[Disk Scan] Error reading ${channelDir}:`, err.message);
+        }
+    }
+
+    const actualFileSet = new Set(downloadedFiles.map(f => f.name.toLowerCase()));
+    const consumedFiles = new Set();
+
+    const syncResults = videos.map((video) => {
+        const expectedFilename = (video.finalFilename || '').toLowerCase();
+        const fileExists = actualFileSet.has(expectedFilename);
+        const isDownloaded = fileExists && !consumedFiles.has(expectedFilename);
+        let fileInfo = null;
+        if (isDownloaded) {
+            consumedFiles.add(expectedFilename);
+            const matchingFile = downloadedFiles.find(f => f.name.toLowerCase() === expectedFilename);
+            if (matchingFile) {
+                fileInfo = {
+                    fileName: matchingFile.name,
+                    filePath: matchingFile.path,
+                    fileSize: matchingFile.size
+                };
+            }
+        }
+        return {
+            id: video.id || video.videoId,
+            isDownloaded: isDownloaded,
+            fileInfo: fileInfo
+        };
+    });
+
+    const videoStatuses = syncResults.map(v => ({
+        videoId: v.id,
+        exists: v.isDownloaded,
+        filename: v.fileInfo ? v.fileInfo.fileName : null,
+        filePath: v.fileInfo ? v.fileInfo.filePath : null
+    }));
+
+    videos.forEach(v => {
+        const vidId = v.id || v.videoId;
+        const statusMatch = videoStatuses.find(st => st.videoId === vidId);
+        if (statusMatch) {
+            v.syncStatus = statusMatch.exists ? 'downloaded' : 'new';
+            if (statusMatch.filename) {
+                v.finalFilename = statusMatch.filename;
+                v.filePath = statusMatch.filePath;
+            }
+            if (statusMatch.exists) {
+                v.downloadStatus = 'completed';
+            }
+        }
+    });
+
+    return {
+        total: videos.length,
+        downloaded: syncResults.filter(v => v.isDownloaded).length,
+        videoStatuses: videoStatuses,
+        syncResults: syncResults
+    };
+}
+
 // Sync status handler function
 const handleChannelSync = (req, res) => {
     const { id } = req.params;
     console.log('\n[Sync] GET /api/channels/' + id + '/sync-status');
     
     try {
-        // ⭐ FIX: Check if sync is already in progress for this channel
-        if (syncInProgress.has(id)) {
-            console.log(`[Sync] ⚠️ SYNC IN PROGRESS: Channel ${id} is already being synced, skipping duplicate request`);
-            return res.status(429).json({
-                success: false,
-                error: 'Sync in progress',
-                message: 'A sync operation is already running for this channel. Please wait for it to complete.'
-            });
-        }
-        
-        // Lock this channel for syncing
-        syncInProgress.add(id);
-        console.log(`[Sync] 🔒 Sync lock acquired for channel ${id}`);
-        
-        // Auto-release lock after timeout (safety measure)
-        setTimeout(() => {
-            if (syncInProgress.has(id)) {
-                console.log(`[Sync] 🔓 Auto-releasing sync lock for channel ${id} (timeout)`);
-                syncInProgress.delete(id);
-            }
-        }, SYNC_LOCK_TIMEOUT);
-        
-        // Find the channel
         if (!savedChannels.has(id)) {
-            syncInProgress.delete(id);  // Release lock on error
             return res.status(404).json({
                 success: false,
                 error: 'Channel not found'
@@ -1889,217 +1942,43 @@ const handleChannelSync = (req, res) => {
         }
         
         const channel = savedChannels.get(id);
-        const videos = channel.videos || [];
-        
-        // Get the channel's download directory
-        const channelDir = getChannelDownloadDir(channel.name);
-        console.log('[Sync] Scanning directory:', channelDir);
-        
-        // Check if directory exists
-        let downloadedFiles = [];
-        if (fs.existsSync(channelDir)) {
-            // Read all .mp4 files from the channel directory
-            try {
-                downloadedFiles = fs.readdirSync(channelDir)
-                    .filter(file => file.toLowerCase().endsWith('.mp4'))
-                    .map(file => ({
-                        name: file,
-                        path: path.join(channelDir, file),
-                        size: fs.statSync(path.join(channelDir, file)).size,
-                        modifiedAt: fs.statSync(path.join(channelDir, file)).mtime.toISOString()
-                    }));
-                console.log('[Sync] Found', downloadedFiles.length, '.mp4 files');
-            } catch (err) {
-                console.error('[Sync] Error reading directory:', err.message);
-            }
-        } else {
-            console.log('[Sync] Channel directory does not exist:', channelDir);
+
+        if (!initialDiskSyncDone) {
+            console.log('[Sync] Initial disk scan requested for channel:', channel.name);
+            performDiskScanForChannel(channel);
+            initialDiskSyncDone = true;
+            saveDatabase();
         }
-        
-        // REVERSE MATCHING ALGORITHM (with deduplication):
-        // 1. Start from ACTUAL files on disk
-        // 2. Match videos to files
-        // 3. Track which files have been "consumed" to prevent double-counting
-        // This guarantees downloaded count <= actual file count
-        
-        // Create a Set of actual filenames (with .mp4 extension) for O(1) lookup
-        // Use lowercase for case-insensitive comparison
-        const actualFileSet = new Set(
-            downloadedFiles.map(f => f.name.toLowerCase())
-        );
-        
-        // Track which files have already been matched/consumed
-        // This prevents multiple video entries from matching the same physical file
-        const consumedFiles = new Set();
-        
-        console.log('[Sync] 📁 Actual files on disk:', Array.from(actualFileSet));
-        console.log('[Sync] 📺 Total videos to check:', videos.length);
-        
-        // Match each video with its download status
-        const syncResults = videos.map((video, index) => {
-            // ⭐⭐⭐ NEW UNIFIED MATCHING (using resolveDuplicatesWithDuration output) ⭐⭐⭐
-            // 
-            // All videos now have 'finalFilename' from the new pipeline:
-            //   - Unique videos: "Sanitized-Title.mp4"
-            //   - Duplicate videos: "Sanitized-Title-(HHh-MMm-SSs).mp4" or "--videoId.mp4"
-            //
-            // Simply use video.finalFilename for matching - no branching needed!
-            
-            const videoTitle = video.displayTitle || video.title || '';  // For display/logging
-            
-            // Use pre-computed finalFilename from resolveDuplicatesWithDuration()
-            const expectedFilename = (video.finalFilename || '').toLowerCase();
-            const matchingStrategy = video.isDuplicate ? 'DUPLICATE (finalFilename)' : 'UNIQUE (finalFilename)';
-            
-            // Check if this exact filename:
-            // 1. Exists in the actual files AND
-            // 2. Has NOT been consumed by a previous match
-            const fileExists = actualFileSet.has(expectedFilename);
-            const isDownloaded = fileExists && !consumedFiles.has(expectedFilename);
-            
-            // Debug logging for first few videos and all matches
-            if (index < 5 || (fileExists && index < 20)) {
-                console.log(`[Sync] Video ${index}: "${videoTitle}"`);
-                console.log(`[Sync]   → Strategy: ${matchingStrategy}`);
-                console.log(`[Sync]   → Raw (YouTube):    "${video.title}"`);
-                console.log(`[Sync]   → Sanitized base:  "${video.sanitizedBase}"`);
-                console.log(`[Sync]   → Expected match:   "${expectedFilename}"`);
-                if (video.isDuplicate) {
-                    console.log(`[Sync]   ⚠️ Duplicate - suffix: "${video.durationSuffix}"`);
-                }
-                console.log(`[Sync]   → File exists: ${fileExists ? '✅ YES' : '❌ NO'}`);
-                if (fileExists) {
-                    console.log(`[Sync]   → Already consumed: ${consumedFiles.has(expectedFilename) ? '⚠️ YES' : '❌ NO'}`);
-                }
-            }
-            
-            // Find the actual file info if downloaded and mark as consumed
-            let fileInfo = null;
-            if (isDownloaded) {
-                consumedFiles.add(expectedFilename); // Mark this file as consumed!
-                
-                // Find the original file (case-sensitive) for file info
-                const matchingFile = downloadedFiles.find(f => 
-                    f.name.toLowerCase() === expectedFilename
-                );
-                if (matchingFile) {
-                    fileInfo = {
-                        fileName: matchingFile.name,
-                        filePath: matchingFile.path,
-                        fileSize: matchingFile.size,
-                        fileSizeMB: (matchingFile.size / (1024 * 1024)).toFixed(2),
-                        downloadedAt: matchingFile.modifiedAt
-                    };
-                    console.log(`[Sync]   ✅ MATCHED & CONSUMED: ${matchingFile.name} (${fileInfo.fileSizeMB} MB)`);
-                }
-            } else if (fileExists) {
-                // File exists but was already consumed by another video
-                console.log(`[Sync]   ⚠️ SKIPPED (file already matched to another video)`);
-            }
-            
-            return {
-                id: video.id || video.videoId,
-                title: videoTitle,
-                displayTitle: video.displayTitle || video.title,           // Raw YouTube title (for UI)
-                sanitizedTitle: video.sanitizedTitle || '',               // Sanitized base (no illegal chars)
-                isDownloaded: isDownloaded,
-                expectedFilename: expectedFilename,                       // What we looked for (Option 2a result)
-                originalExpectedFilename: videoTitle + '.mp4',            // Raw version (for comparison)
-                matchingStrategy: matchingStrategy,                       // Which path was taken
-                fileInfo: fileInfo
-            };
-        });
-        
-        // Calculate statistics
-        const totalVideos = syncResults.length;
-        const downloadedCount = syncResults.filter(v => v.isDownloaded).length;
+
+        const videos = channel.videos || [];
+        const totalVideos = videos.length;
+        const downloadedCount = videos.filter(v => v.syncStatus === 'downloaded' || v.downloadStatus === 'completed').length;
         const remainingCount = totalVideos - downloadedCount;
-        
-        const videoStatuses = syncResults.map(v => ({
-            videoId: v.id,
-            exists: v.isDownloaded,
-            filename: v.fileInfo ? v.fileInfo.fileName : null,
-            filePath: v.fileInfo ? v.fileInfo.filePath : null
+
+        const videoStatuses = videos.map(v => ({
+            videoId: v.id || v.videoId,
+            exists: v.syncStatus === 'downloaded' || v.downloadStatus === 'completed',
+            filename: v.finalFilename || null,
+            filePath: v.filePath || null
         }));
 
-        // Persist synced statuses back to savedChannel object
-        videos.forEach(v => {
-            const vidId = v.id || v.videoId;
-            const statusMatch = videoStatuses.find(st => st.videoId === vidId);
-            if (statusMatch) {
-                v.syncStatus = statusMatch.exists ? 'downloaded' : 'new';
-                if (statusMatch.filename) {
-                    v.finalFilename = statusMatch.filename;
-                    v.filePath = statusMatch.filePath;
-                }
-                if (statusMatch.exists) {
-                    v.downloadStatus = 'completed';
-                }
-            }
-        });
-        savedChannels.set(id, channel);
-        saveDatabase();
-
-        const response = {
+        res.json({
             success: true,
             channelId: id,
             channelName: channel.name,
-            channelDir: channelDir,
             statistics: {
                 total: totalVideos,
                 downloaded: downloadedCount,
                 remaining: remainingCount,
                 percentage: totalVideos > 0 ? ((downloadedCount / totalVideos) * 100).toFixed(1) : 0
             },
-            videos: syncResults,
+            videos: videos,
             videoStatuses: videoStatuses,
             scannedAt: new Date().toISOString()
-        };
-        
-        console.log('\n[Sync] ✅ SYNC COMPLETE (Option 2a - Smart Hybrid Matching):');
-        console.log('   ════════════════════════════════════════════════════════');
-        console.log('   📊 Total videos in channel:', totalVideos);
-        console.log('   📁 Physical .mp4 files on disk:', downloadedFiles.length);
-        console.log('   ✅ Files matched/consumed (Downloaded):', consumedFiles.size);
-        console.log('   🔴 Videos without files (Remaining):', remainingCount);
-        console.log('   📈 Download percentage:', ((downloadedCount / totalVideos) * 100).toFixed(1) + '%');
-        
-        // ⭐ BUG FIX #10: Show Option 2a strategy breakdown
-        const uniqueCount = syncResults.filter(v => v.matchingStrategy === 'UNIQUE (sanitizedTitle)').length;
-        const duplicateCount = syncResults.filter(v => v.matchingStrategy === 'DUPLICATE (downloadFilename)').length;
-        console.log('\n   🎯 Option 2a Strategy Breakdown:');
-        console.log('      ──────────────────────────────────────');
-        console.log(`      📝 Unique titles (sanitizedTitle):     ${uniqueCount}`);
-        console.log(`      🔁 Duplicate titles (downloadFilename): ${duplicateCount}`);
-        console.log('      ──────────────────────────────────────');
-        
-        // Validation check
-        if (downloadedCount > downloadedFiles.length) {
-            console.log('   ⚠️  WARNING: Downloaded count exceeds file count! Bug detected!');
-        } else if (downloadedCount === downloadedFiles.length) {
-            console.log('   ✅ VALIDATION PASSED: Downloaded count matches file count!');
-        }
-        
-        if (downloadedFiles.length > 0) {
-            console.log('\n   📁 Files found on disk:');
-            downloadedFiles.forEach((f, i) => {
-                const isConsumed = consumedFiles.has(f.name.toLowerCase());
-                console.log(`      ${i+1}. ${f.name} ${isConsumed ? '✅ MATCHED' : '❌ UNMATCHED'} (${(f.size/(1024*1024)).toFixed(2)} MB)`);
-            });
-        }
-        console.log('   ════════════════════════════════════════════════════════\n');
-        
-        // ⭐ FIX: Release sync lock before sending response
-        syncInProgress.delete(id);
-        console.log(`[Sync] 🔓 Sync lock released for channel ${id}`);
-        
-        res.json(response);
+        });
         
     } catch (error) {
         console.error('[Sync] ❌ Error:', error.message);
-        // ⭐ FIX: Release sync lock on error too
-        syncInProgress.delete(id);
-        console.log(`[Sync] 🔓 Sync lock released for channel ${id} (error)`);
         res.status(500).json({
             success: false,
             error: 'Failed to check sync status: ' + error.message
@@ -2118,76 +1997,32 @@ app.post('/api/channels/sync-all', (req, res) => {
             }
         });
 
+        const performDiskScanNow = !initialDiskSyncDone;
+        if (performDiskScanNow) {
+            console.log('[Sync All] First sync after server start: Scanning download folder as MASTER point.');
+        }
+
         const channelSyncResults = {};
         for (const [id, channel] of savedChannels.entries()) {
-            const videos = channel.videos || [];
-            const channelDir = getChannelDownloadDir(channel.name);
-            let downloadedFiles = [];
-            if (fs.existsSync(channelDir)) {
-                try {
-                    downloadedFiles = fs.readdirSync(channelDir)
-                        .filter(file => file.toLowerCase().endsWith('.mp4'))
-                        .map(file => ({
-                            name: file,
-                            path: path.join(channelDir, file),
-                            size: fs.statSync(path.join(channelDir, file)).size,
-                            modifiedAt: fs.statSync(path.join(channelDir, file)).mtime.toISOString()
-                        }));
-                } catch (err) {
-                    console.error(`[Sync All] Error reading ${channelDir}:`, err.message);
-                }
-            }
-
-            const actualFileSet = new Set(downloadedFiles.map(f => f.name.toLowerCase()));
-            const consumedFiles = new Set();
-
-            const syncResults = videos.map((video) => {
-                const expectedFilename = (video.finalFilename || '').toLowerCase();
-                const fileExists = actualFileSet.has(expectedFilename);
-                const isDownloaded = fileExists && !consumedFiles.has(expectedFilename);
-                let fileInfo = null;
-                if (isDownloaded) {
-                    consumedFiles.add(expectedFilename);
-                    const matchingFile = downloadedFiles.find(f => f.name.toLowerCase() === expectedFilename);
-                    if (matchingFile) {
-                        fileInfo = {
-                            fileName: matchingFile.name,
-                            filePath: matchingFile.path,
-                            fileSize: matchingFile.size
-                        };
-                    }
-                }
-                return {
-                    id: video.id || video.videoId,
-                    isDownloaded: isDownloaded,
-                    fileInfo: fileInfo
+            let scanRes;
+            if (performDiskScanNow) {
+                scanRes = performDiskScanForChannel(channel);
+            } else {
+                const videos = channel.videos || [];
+                const total = videos.length;
+                const downloaded = videos.filter(v => v.syncStatus === 'downloaded' || v.downloadStatus === 'completed').length;
+                const videoStatuses = videos.map(v => ({
+                    videoId: v.id || v.videoId,
+                    exists: v.syncStatus === 'downloaded' || v.downloadStatus === 'completed',
+                    filename: v.finalFilename || null,
+                    filePath: v.filePath || null
+                }));
+                scanRes = {
+                    total: total,
+                    downloaded: downloaded,
+                    videoStatuses: videoStatuses
                 };
-            });
-
-            const total = syncResults.length;
-            const downloaded = syncResults.filter(v => v.isDownloaded).length;
-
-            const videoStatuses = syncResults.map(v => ({
-                videoId: v.id,
-                exists: v.isDownloaded,
-                filename: v.fileInfo ? v.fileInfo.fileName : null,
-                filePath: v.fileInfo ? v.fileInfo.filePath : null
-            }));
-
-            videos.forEach(v => {
-                const vidId = v.id || v.videoId;
-                const statusMatch = videoStatuses.find(st => st.videoId === vidId);
-                if (statusMatch) {
-                    v.syncStatus = statusMatch.exists ? 'downloaded' : 'new';
-                    if (statusMatch.filename) {
-                        v.finalFilename = statusMatch.filename;
-                        v.filePath = statusMatch.filePath;
-                    }
-                    if (statusMatch.exists) {
-                        v.downloadStatus = 'completed';
-                    }
-                }
-            });
+            }
 
             savedChannels.set(id, channel);
 
@@ -2195,15 +2030,18 @@ app.post('/api/channels/sync-all', (req, res) => {
                 channelId: id,
                 channelName: channel.name,
                 statistics: {
-                    total: total,
-                    downloaded: downloaded,
-                    remaining: total - downloaded
+                    total: scanRes.total,
+                    downloaded: scanRes.downloaded,
+                    remaining: scanRes.total - scanRes.downloaded
                 },
-                videoStatuses: videoStatuses
+                videoStatuses: scanRes.videoStatuses
             };
         }
 
-        saveDatabase();
+        if (performDiskScanNow) {
+            initialDiskSyncDone = true;
+            saveDatabase();
+        }
 
         res.json({
             success: true,
