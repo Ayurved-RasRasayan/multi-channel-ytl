@@ -2649,7 +2649,7 @@
         }
         
         /**
-         * Download all videos from all channels
+         * Download all remaining (unsynced/undownloaded) videos from all channels
          */
         async function downloadAllChannels() {
             if (channels.length === 0) {
@@ -2657,31 +2657,64 @@
                 return;
             }
             
-            if (!confirm(`Start downloading videos from all ${channels.length} channels?`)) {
+            if (!confirm(`Start downloading all remaining unsynced videos from all ${channels.length} channels?`)) {
                 return;
             }
             
-            showAlert(`⬇️ Starting downloads for ${channels.length} channels...`, 'info', 5000);
-            addLogEntry(`⬇️ Starting batch download for all ${channels.length} channels`, 'info');
+            showAlert(`⬇️ Queuing remaining videos across all channels...`, 'info', 5000);
+            addLogEntry(`⬇️ Starting download for all unsynced/remaining videos in all channels`, 'info');
             
-            // This would call an API endpoint to queue downloads for all channels
-            // For now, just show the message
-            try {
-                const response = await fetch(`${API_BASE}/api/download/all-channels`, {
-                    method: 'POST'
-                });
-                const data = await response.json();
-                
-                if (data.success) {
-                    showAlert(`✅ Queued ${data.totalVideos} videos for download`, 'success');
-                    addLogEntry(`✅ Queued ${data.totalVideos} videos from all channels`, 'success');
-                    refreshQueue();
-                } else {
-                    throw new Error(data.error || 'Failed to start downloads');
+            let totalQueued = 0;
+            let errorCount = 0;
+
+            for (const ch of channels) {
+                const chVideos = ch.videos || (ch.data && ch.data.videos) || [];
+                const remaining = chVideos.filter(v =>
+                    v.syncStatus !== 'downloaded' &&
+                    v.downloadStatus !== 'completed' &&
+                    v.downloadStatus !== 'skipped' &&
+                    v.downloadStatus !== 'downloading' &&
+                    v.downloadStatus !== 'queued'
+                );
+
+                for (const video of remaining) {
+                    try {
+                        const response = await fetch(`${API_BASE}/api/download`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                videoId: video.id || video.videoId,
+                                title: video.displayTitle || video.title,
+                                finalFilename: video.finalFilename || null,
+                                downloadFilename: video.downloadFilename || null,
+                                channelId: ch.id,
+                                channelName: ch.name,
+                                format: 'best',
+                                quality: 'lowest'
+                            })
+                        });
+
+                        const result = await response.json();
+                        if (result.status === 'queued' || result.downloadId) {
+                            video.downloadStatus = 'queued';
+                            video.downloadId = result.downloadId;
+                            totalQueued++;
+                        }
+                    } catch (err) {
+                        errorCount++;
+                    }
                 }
-            } catch (error) {
-                showAlert(`Error: ${error.message}`, 'error');
-                addLogEntry(`❌ Error starting batch download: ${error.message}`, 'error');
+            }
+
+            renderVideos();
+            refreshQueue();
+            startPolling();
+
+            if (totalQueued > 0) {
+                showAlert(`✅ Queued ${totalQueued} remaining videos from all channels`, 'success');
+                addLogEntry(`✅ Queued ${totalQueued} remaining videos across all channels`, 'success');
+            } else {
+                showAlert(`🎉 All available videos across channels are already downloaded or queued`, 'info');
             }
         }
         
