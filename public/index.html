@@ -2545,6 +2545,11 @@
                 return;
             }
             
+            // Reset sync state for new channel unless synced
+            syncData = null;
+            const syncStatsBar = document.getElementById('syncStatsBar');
+            if (syncStatsBar) syncStatsBar.style.display = 'none';
+
             // Update active state
             activeChannelId = channelId;
             currentChannel = channel.data || channel;
@@ -3025,6 +3030,10 @@
                     throw new Error(data.error || 'Failed to load channel');
                 }
 
+                syncData = null;
+                const syncStatsBar = document.getElementById('syncStatsBar');
+                if (syncStatsBar) syncStatsBar.style.display = 'none';
+
                 currentChannel = data.channel;
                 videos = currentChannel.videos || [];
 
@@ -3103,24 +3112,32 @@
 
             // Group by sync status if we have sync data
             if (syncData && currentSyncFilter === 'all') {
-                const downloaded = videosToRender.filter(v => v.syncStatus === 'downloaded');
-                const newVideos = videosToRender.filter(v => v.syncStatus === 'new');
+                const downloaded = videosToRender.filter(v =>
+                    v.syncStatus === 'downloaded' || v.downloadStatus === 'completed' || v.downloadStatus === 'skipped'
+                );
+                const newVideos = videosToRender.filter(v =>
+                    v.syncStatus !== 'downloaded' && v.downloadStatus !== 'completed' && v.downloadStatus !== 'skipped'
+                );
                 
                 let html = '';
                 
                 if (downloaded.length > 0) {
                     html += `<div class="sync-section-header downloaded-section">✅ Downloaded (${downloaded.length})</div>`;
-                    html += downloaded.map((video, idx) => renderVideoItem(video, videos.indexOf(video))).join('');
+                    html += downloaded.map((video) => renderVideoItem(video, videos.indexOf(video))).join('');
                 }
                 
                 if (newVideos.length > 0) {
                     html += `<div class="sync-section-header new-section">🔴 New/Remaining (${newVideos.length})</div>`;
-                    html += newVideos.map((video, idx) => renderVideoItem(video, videos.indexOf(video))).join('');
+                    html += newVideos.map((video) => renderVideoItem(video, videos.indexOf(video))).join('');
+                }
+
+                if (!html) {
+                    html = videosToRender.map((video) => renderVideoItem(video, videos.indexOf(video))).join('');
                 }
                 
                 container.innerHTML = html;
             } else {
-                container.innerHTML = videosToRender.map((video, idx) => 
+                container.innerHTML = videosToRender.map((video) =>
                     renderVideoItem(video, videos.indexOf(video))
                 ).join('');
             }
