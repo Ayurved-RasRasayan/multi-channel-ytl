@@ -3384,7 +3384,9 @@
             
             try {
                 const response = await fetch(`${API_BASE}/api/channels/sync-all`, {
-                    method: 'POST'
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channels: channels })
                 });
                 
                 const data = await response.json();
@@ -3405,11 +3407,16 @@
                                             video.finalFilename = status.filename;
                                             video.filePath = status.filePath;
                                         }
+                                        if (status.exists) {
+                                            video.downloadStatus = 'completed';
+                                        }
                                     }
                                 });
                             }
                         }
                     });
+
+                    saveChannels();
 
                     if (currentChannel && data.results[currentChannel.id]) {
                         syncData = data.results[currentChannel.id];

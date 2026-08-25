@@ -466,10 +466,39 @@ try {
 }
 
 // =============================================================================
-// IN-MEMORY STORAGE
+// PERSISTENT DATABASE STORAGE
 // =============================================================================
 
+const DB_FILE = path.join(__dirname, 'db_channels.json');
 const savedChannels = new Map();
+
+function loadDatabase() {
+    try {
+        if (fs.existsSync(DB_FILE)) {
+            const data = fs.readFileSync(DB_FILE, 'utf8');
+            const parsed = JSON.parse(data);
+            if (Array.isArray(parsed)) {
+                parsed.forEach(ch => {
+                    if (ch && ch.id) savedChannels.set(ch.id, ch);
+                });
+                console.log(`[Database] Loaded ${savedChannels.size} channels from DB file.`);
+            }
+        }
+    } catch (e) {
+        console.error('[Database] Failed to load DB file:', e.message);
+    }
+}
+
+function saveDatabase() {
+    try {
+        const channelsArr = Array.from(savedChannels.values());
+        fs.writeFileSync(DB_FILE, JSON.stringify(channelsArr, null, 2), 'utf8');
+    } catch (e) {
+        console.error('[Database] Failed to save DB file:', e.message);
+    }
+}
+
+loadDatabase();
 
 // ⭐ NEW: Server-side log buffer for terminal output viewing
 const serverLogBuffer = [];
@@ -1772,8 +1801,9 @@ app.post('/api/channels', async (req, res) => {
             status: 'active'
         };
         
-        // Save to in-memory storage
+        // Save to storage and persist
         savedChannels.set(channel.id, channel);
+        saveDatabase();
         
         console.log('[Channels] 💾 Channel saved with ID:', channel.id);
         console.log('='.repeat(80) + '\n');
@@ -1992,6 +2022,24 @@ const handleChannelSync = (req, res) => {
             filePath: v.fileInfo ? v.fileInfo.filePath : null
         }));
 
+        // Persist synced statuses back to savedChannel object
+        videos.forEach(v => {
+            const vidId = v.id || v.videoId;
+            const statusMatch = videoStatuses.find(st => st.videoId === vidId);
+            if (statusMatch) {
+                v.syncStatus = statusMatch.exists ? 'downloaded' : 'new';
+                if (statusMatch.filename) {
+                    v.finalFilename = statusMatch.filename;
+                    v.filePath = statusMatch.filePath;
+                }
+                if (statusMatch.exists) {
+                    v.downloadStatus = 'completed';
+                }
+            }
+        });
+        savedChannels.set(id, channel);
+        saveDatabase();
+
         const response = {
             success: true,
             channelId: id,
@@ -2063,6 +2111,13 @@ const handleChannelSync = (req, res) => {
 app.post('/api/channels/sync-all', (req, res) => {
     console.log('\n[Sync All] POST /api/channels/sync-all requested');
     try {
+        const clientChannels = req.body && Array.isArray(req.body.channels) ? req.body.channels : [];
+        clientChannels.forEach(c => {
+            if (c && c.id && !savedChannels.has(c.id)) {
+                savedChannels.set(c.id, c);
+            }
+        });
+
         const channelSyncResults = {};
         for (const [id, channel] of savedChannels.entries()) {
             const videos = channel.videos || [];
@@ -2112,6 +2167,30 @@ app.post('/api/channels/sync-all', (req, res) => {
             const total = syncResults.length;
             const downloaded = syncResults.filter(v => v.isDownloaded).length;
 
+            const videoStatuses = syncResults.map(v => ({
+                videoId: v.id,
+                exists: v.isDownloaded,
+                filename: v.fileInfo ? v.fileInfo.fileName : null,
+                filePath: v.fileInfo ? v.fileInfo.filePath : null
+            }));
+
+            videos.forEach(v => {
+                const vidId = v.id || v.videoId;
+                const statusMatch = videoStatuses.find(st => st.videoId === vidId);
+                if (statusMatch) {
+                    v.syncStatus = statusMatch.exists ? 'downloaded' : 'new';
+                    if (statusMatch.filename) {
+                        v.finalFilename = statusMatch.filename;
+                        v.filePath = statusMatch.filePath;
+                    }
+                    if (statusMatch.exists) {
+                        v.downloadStatus = 'completed';
+                    }
+                }
+            });
+
+            savedChannels.set(id, channel);
+
             channelSyncResults[id] = {
                 channelId: id,
                 channelName: channel.name,
@@ -2120,14 +2199,11 @@ app.post('/api/channels/sync-all', (req, res) => {
                     downloaded: downloaded,
                     remaining: total - downloaded
                 },
-                videoStatuses: syncResults.map(v => ({
-                    videoId: v.id,
-                    exists: v.isDownloaded,
-                    filename: v.fileInfo ? v.fileInfo.fileName : null,
-                    filePath: v.fileInfo ? v.fileInfo.filePath : null
-                }))
+                videoStatuses: videoStatuses
             };
         }
+
+        saveDatabase();
 
         res.json({
             success: true,
@@ -2155,6 +2231,7 @@ app.delete('/api/channels/:id', (req, res) => {
     
     if (savedChannels.has(id)) {
         savedChannels.delete(id);
+        saveDatabase();
         console.log('[Channels] ✅ Channel deleted:', id);
         res.json({
             success: true,
