@@ -2107,25 +2107,48 @@ app.delete('/api/channels/:id', (req, res) => {
 // =============================================================================
 
 app.get('/api/download-queue', (req, res) => {
-    const active = downloadManager.getActive().map(d => ({
-        id: d.id,
-        videoId: d.videoId,
-        title: d.title,
-        filename: d.filename,
-        status: d.status,
-        progress: d.progress || 0,
-        speed: d.speed || null,
-        downloaded: d.downloaded || null,
-        total: d.total || null,
-        startTime: d.startTime,
-        url: d.url,
-        format: d.format,
-        quality: d.quality,
-        finalFilename: d.finalFilename || null,
-        renamedFrom: d.renamedFrom || null,
-        error: d.error || null
-    }));
+    const queueStatus = downloadQueue.getStatus();
     
+    // Map active jobs from downloadQueue tracking
+    const active = queueStatus.activeDownloads.map(d => {
+        const fullDl = downloadManager.get(d.id) || {};
+        return {
+            id: d.id,
+            videoId: fullDl.videoId,
+            title: d.title || fullDl.title,
+            filename: fullDl.filename,
+            status: 'downloading',
+            progress: fullDl.progress || 0,
+            speed: fullDl.speed || null,
+            downloaded: fullDl.downloaded || null,
+            total: fullDl.total || null,
+            startTime: fullDl.startTime,
+            url: fullDl.url,
+            format: fullDl.format,
+            quality: fullDl.quality,
+            finalFilename: fullDl.finalFilename || null,
+            renamedFrom: fullDl.renamedFrom || null,
+            error: fullDl.error || null
+        };
+    });
+
+    // Map waiting queued jobs from downloadQueue tracking
+    const queued = downloadQueue.queue.map(job => {
+        const fullDl = downloadManager.get(job.downloadId) || {};
+        return {
+            id: job.downloadId,
+            videoId: fullDl.videoId,
+            title: job.videoTitle || fullDl.title,
+            filename: fullDl.filename,
+            status: 'queued',
+            progress: 0,
+            url: fullDl.url
+        };
+    });
+
+    // Combine active and queued for frontend queue list
+    const activeAndQueued = [...active, ...queued];
+
     const completed = downloadManager.getCompleted().map(d => ({
         id: d.id,
         videoId: d.videoId,
@@ -2143,7 +2166,7 @@ app.get('/api/download-queue', (req, res) => {
     res.json({
         success: true,
         queue: {
-            active: active,
+            active: activeAndQueued,
             completed: completed
         },
         timestamp: new Date().toISOString()
