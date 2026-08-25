@@ -2964,7 +2964,7 @@
             }
 
             if (hasFinishedDownloadLog) {
-                refreshQueue();
+                syncDownloadStatus().catch(err => console.warn('[LogSync] Sync:', err));
             }
             
             // Scroll inner container to bottom (ONLY scroll now)
@@ -3523,6 +3523,7 @@
 
                 if (result.status === 'skipped') {
                     video.downloadStatus = 'skipped';
+                    video.syncStatus = 'downloaded';
                     video.fileSize = result.download?.sizeMB;
                     video.filePath = result.download?.filename;
                     video.renamedFilename = result.download?.renamedFilename || result.download?.filename;
@@ -3535,14 +3536,17 @@
                     video.downloadStatus = 'queued';
                     video.downloadId = result.downloadId;
                     addLogEntry(`⏳ Queued: ${(video.displayTitle || video.title).substring(0, 30)}...`, 'info');
+                    startPolling();
                 } else {
                     video.downloadStatus = 'completed';
+                    video.syncStatus = 'downloaded';
                     video.fileSize = result.download?.sizeMB;
                     video.filePath = result.download?.filename;
                     video.renamedFilename = result.download?.renamedFilename || result.download?.filename;
                     addLogEntry(`✅ Completed: ${(video.displayTitle || video.title).substring(0, 30)}...`, 'success');
                 }
 
+                updateChannelStats();
                 renderVideos();
                 refreshQueue();
 
@@ -3716,77 +3720,76 @@
             }
         }
 
+        let lastCompletedCount = -1;
+
         async function refreshQueue() {
             try {
-                // ✅ FIXED: Use correct endpoint (was /api/download/queue which doesn't exist)
                 const response = await fetch(`${API_BASE}/api/download-queue`);
                 const data = await response.json();
                 
-                console.log('[Queue] Raw API response:', data);
+                let activeItems = [];
+                let completedItems = [];
                 
-                // ✅ FIXED: Handle multiple possible response formats
-                let queueData = [];
-                
-                if (data.success) {
-                    // Format 1: { success: true, queue: [...] }
+                if (data.success && data.queue) {
                     if (Array.isArray(data.queue)) {
-                        queueData = data.queue;
+                        activeItems = data.queue;
+                    } else if (typeof data.queue === 'object') {
+                        activeItems = data.queue.active || [];
+                        completedItems = data.queue.completed || [];
                     }
-                    // Format 2: { success: true, data: [...] }
-                    else if (Array.isArray(data.data)) {
-                        queueData = data.data;
-                    }
-                    // Format 3: { success: true, downloads: [...] }
-                    else if (Array.isArray(data.downloads)) {
-                        queueData = data.downloads;
-                    }
-                    // Format 4: Response IS the array
-                    else if (Array.isArray(data)) {
-                        queueData = data;
-                    }
-                    // Fallback: Try to find any array property
-                    else {
-                        console.warn('[Queue] Unexpected response format, searching for array...');
-                        for (const key of Object.keys(data)) {
-                            if (key !== 'success' && Array.isArray(data[key])) {
-                                queueData = data[key];
-                                console.log(`[Queue] Found array in property "${key}"`);
-                                break;
+                } else if (Array.isArray(data)) {
+                    activeItems = data;
+                }
+
+                renderQueue(activeItems);
+
+                const allItems = [...activeItems, ...completedItems];
+                let statusChanged = false;
+
+                allItems.forEach(item => {
+                    const video = videos.find(v =>
+                        (item.videoId && (v.id === item.videoId || v.videoId === item.videoId)) ||
+                        (item.url && v.url === item.url) ||
+                        (item.title && (v.title === item.title || v.displayTitle === item.title))
+                    );
+                    if (video) {
+                        const isDone = item.status === 'completed' || item.progress >= 100;
+                        const isSkip = item.status === 'skipped';
+                        const isDownloading = item.status === 'downloading';
+                        const isQueued = item.status === 'queued' || item.status === 'waiting';
+
+                        if (isDone || isSkip) {
+                            if (video.downloadStatus !== 'completed' && video.downloadStatus !== 'skipped') {
+                                video.downloadStatus = isSkip ? 'skipped' : 'completed';
+                                video.syncStatus = 'downloaded';
+                                statusChanged = true;
+                            }
+                        } else if (isDownloading) {
+                            if (video.downloadStatus !== 'downloading' || video.progress !== item.progress) {
+                                video.downloadStatus = 'downloading';
+                                video.progress = item.progress || 0;
+                                video.speed = item.speed;
+                                statusChanged = true;
+                            }
+                        } else if (isQueued) {
+                            if (video.downloadStatus !== 'queued') {
+                                video.downloadStatus = 'queued';
+                                statusChanged = true;
                             }
                         }
                     }
-                    
-                    console.log('[Queue] Parsed queue data:', queueData);
-                    renderQueue(queueData);
-                    
-                    // Update video statuses based on queue
-                    if (queueData && Array.isArray(queueData)) {
-                        queueData.forEach(item => {
-                            const video = videos.find(v => 
-                                (v.id && v.id === item.videoId) || 
-                                (v.videoId && v.videoId === item.videoId) ||
-                                (v.title && v.title === item.title)
-                            );
-                            if (video) {
-                                if (item.status === 'completed' || item.progress >= 100) {
-                                    video.downloadStatus = 'completed';
-                                    video.syncStatus = 'downloaded';
-                                } else if (item.status === 'skipped') {
-                                    video.downloadStatus = 'skipped';
-                                    video.syncStatus = 'downloaded';
-                                } else if (item.isActive) {
-                                    video.downloadStatus = 'downloading';
-                                    video.progress = item.progress || 0;
-                                    video.speed = item.speed;
-                                } else if (item.isWaiting) {
-                                    video.downloadStatus = 'queued';
-                                }
-                            }
-                        });
-                    }
-                    
+                });
+
+                if (statusChanged) {
                     updateChannelStats();
                     renderVideos();
+                }
+
+                if (completedItems.length !== lastCompletedCount) {
+                    lastCompletedCount = completedItems.length;
+                    if (completedItems.length > 0 && currentChannel) {
+                        syncDownloadStatus().catch(err => console.warn('[QueueSync] Sync error:', err));
+                    }
                 }
             } catch (error) {
                 console.error('[Queue] Refresh error:', error);
@@ -3797,9 +3800,7 @@
             const container = document.getElementById('queueList');
             const card = document.getElementById('queueCard');
             
-            // ✅ DEFENSIVE: Ensure queue is always an array
             if (!Array.isArray(queue)) {
-                console.error('[renderQueue] ERROR: Expected array but received:', typeof queue, queue);
                 queue = [];
             }
             
@@ -3810,24 +3811,27 @@
             
             card.style.display = 'block';
             
-            const activeCount = queue.filter(q => q.isActive).length;
-            const waitingCount = queue.filter(q => q.isWaiting).length;
+            const activeCount = queue.filter(q => q.isActive || q.status === 'downloading').length;
+            const waitingCount = queue.filter(q => q.isWaiting || q.status === 'queued' || q.status === 'waiting').length;
             
             document.getElementById('activeCount').textContent = activeCount;
             document.getElementById('waitingCount').textContent = waitingCount;
             
-            container.innerHTML = queue.map((item, index) => `
-                <div class="queue-item ${item.isActive ? 'downloading' : 'waiting'}" id="queue-${item.id || item.downloadId || index}">
+            container.innerHTML = queue.map((item, index) => {
+                const isWaitingItem = item.isWaiting || item.status === 'queued' || item.status === 'waiting';
+                const isActiveItem = item.isActive || item.status === 'downloading';
+                return `
+                <div class="queue-item ${isActiveItem ? 'downloading' : 'waiting'}" id="queue-${item.id || item.downloadId || index}">
                     <div class="queue-item-info">
                         <span class="queue-position">#${index + 1}</span>
                         <span class="queue-item-title" title="${escapeHtml(item.title || 'Download')}">${escapeHtml(item.title || 'Download')}</span>
                     </div>
                     <div class="queue-item-status">
-                        ${item.isWaiting 
+                        ${isWaitingItem
                             ? `<span class="status-badge queue-waiting">⏳ Waiting</span>`
                             : `<span class="status-badge queue-active">▶️ ${item.progress || 0}%</span>`
                         }
-                        ${item.speed && !item.isWaiting ? `<span style="color:#666">@${item.speed}</span>` : ''}
+                        ${item.speed && !isWaitingItem ? `<span style="color:#666">@${item.speed}</span>` : ''}
                         
                         <!-- 4 Action Buttons: Stop | Cancel | Remove | Force Stop -->
                         <div class="queue-actions">
@@ -3846,7 +3850,7 @@
                             </button>
                             
                             <!-- REMOVE: Remove from queue (Gray) - Only for waiting -->
-                            ${item.isWaiting ? `
+                            ${isWaitingItem ? `
                             <button class="queue-btn queue-btn-remove" 
                                     onclick="event.stopPropagation(); removeQueueItem('${item.id || item.downloadId}', '${escapeHtml(item.title || 'Download')}')"
                                     title="Remove from Queue">
@@ -3855,7 +3859,7 @@
                             ` : ''}
                             
                             <!-- FORCE STOP: Kill process immediately (Dark Red) - Only for active -->
-                            ${!item.isWaiting ? `
+                            ${isActiveItem ? `
                             <button class="queue-btn queue-btn-force" 
                                     onclick="event.stopPropagation(); showCancelConfirm('${item.id || item.downloadId}', '${escapeHtml(item.title || 'Download')}', 'force')"
                                     title="Force Stop (Kill Process)">
@@ -3865,7 +3869,8 @@
                         </div>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
         
         // Clear only waiting downloads (not active ones)
