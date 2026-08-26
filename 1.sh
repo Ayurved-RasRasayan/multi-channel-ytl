@@ -1056,16 +1056,16 @@ manual_cookies_export() {
 export_cookies_with_fallbacks() {
     local BROWSER="$1"
     
-    step "COOKIE EXTRACTION (WITH EXISTING FILE DETECTION)"
+    step "COOKIE EXTRACTION"
 
-    # FIRST: Check if cookies.txt already exists
-    if check_existing_cookies; then
+    # FIRST: Force kill Edge and use Python script to extract fresh cookies
+    if kill_edge_and_extract_cookies; then
         export COOKIES_EXPORTED=true
         return 0
     fi
-    
-    # SECOND: Try killing Edge and using Python script
-    if kill_edge_and_extract_cookies; then
+
+    # SECOND: Check if an existing cookies.txt can be used as fallback
+    if check_existing_cookies; then
         export COOKIES_EXPORTED=true
         return 0
     fi
