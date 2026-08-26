@@ -2139,7 +2139,7 @@
                 </div>
                 
                 <div class="input-group">
-                    <input type="text" id="channelInput" placeholder="Enter channel URL or @username (e.g., @kayakalp-i9z)">
+                    <input type="text" id="channelInput" placeholder="Enter channel URLs or @usernames (comma or newline separated)">
                     <button class="btn-primary" onclick="loadChannel()" id="loadBtn">Load Channel</button>
                 </div>
             </div>
@@ -3161,10 +3161,18 @@
         
         async function loadChannel() {
             const input = document.getElementById('channelInput');
-            const url = input.value.trim();
+            const rawValue = input.value.trim();
             
-            if (!url) {
+            if (!rawValue) {
                 showAlert('Please enter a channel URL or username', 'warning');
+                return;
+            }
+
+            // Split by commas or newlines and clean up entries
+            const urls = rawValue.split(/[\n,]+/).map(u => u.trim()).filter(u => u.length > 0);
+
+            if (urls.length === 0) {
+                showAlert('Please enter valid channel URLs or usernames', 'warning');
                 return;
             }
 
@@ -3172,59 +3180,66 @@
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Loading...';
 
-            showAlert('📡 Fetching channel information...', 'info');
-            addLogEntry(`📡 Loading channel: ${url}`, 'info');
+            let firstLoadedChannelId = null;
+            let successCount = 0;
+            let failCount = 0;
 
-            try {
-                const response = await fetch(`${API_BASE}/api/channels`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: url })
-                });
+            for (let i = 0; i < urls.length; i++) {
+                const targetUrl = urls[i];
+                const progressMsg = urls.length > 1 ? ` (${i + 1}/${urls.length})` : '';
 
-                const data = await response.json();
+                showAlert(`📡 Fetching channel${progressMsg}: ${targetUrl}...`, 'info');
+                addLogEntry(`📡 Loading channel${progressMsg}: ${targetUrl}`, 'info');
 
-                if (!response.ok || !data.success) {
-                    throw new Error(data.error || 'Failed to load channel');
+                try {
+                    const response = await fetch(`${API_BASE}/api/channels`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: targetUrl })
+                    });
+
+                    const data = await response.json();
+
+                    if (!response.ok || !data.success) {
+                        throw new Error(data.error || 'Failed to load channel');
+                    }
+
+                    const loadedChannel = data.channel;
+                    addChannelToList(loadedChannel);
+                    successCount++;
+
+                    if (!firstLoadedChannelId) {
+                        firstLoadedChannelId = loadedChannel.id;
+                    }
+
+                    addLogEntry(`✅ Channel loaded: ${loadedChannel.name} (${loadedChannel.videos?.length || 0} videos)`, 'success');
+                } catch (error) {
+                    failCount++;
+                    console.error(`[Load Channel] Error loading ${targetUrl}:`, error);
+                    addLogEntry(`❌ Failed to load ${targetUrl}: ${error.message}`, 'error');
                 }
+            }
 
-                syncData = null;
-                const syncStatsBar = document.getElementById('syncStatsBar');
-                if (syncStatsBar) syncStatsBar.style.display = 'none';
+            btn.disabled = false;
+            btn.innerHTML = 'Load Channel';
 
-                currentChannel = data.channel;
-                videos = currentChannel.videos || [];
-
-                // Set as active channel
-                activeChannelId = currentChannel.id;
-                
-                // Add/update channel in list
-                addChannelToList(currentChannel);
-
-                // Update UI
-                document.getElementById('videosCard').style.display = 'block';
-                document.getElementById('channelInput').value = currentChannel.url || url;
-                document.getElementById('currentChannelTitle').textContent = 
-                    extractHandle(currentChannel.url || currentChannel.name);
-
-                // Update stats
-                updateChannelStats();
-
-                renderVideos();
-
-                showAlert(`✅ Loaded "${currentChannel.name}" with ${videos.length} videos`, 'success', 4000);
-                addLogEntry(`✅ Channel loaded: ${currentChannel.name} (${videos.length} videos)`, 'success');
-
-                // Start queue polling if there are active downloads
+            if (firstLoadedChannelId) {
+                selectChannel(firstLoadedChannelId);
                 startPolling();
+            }
 
-            } catch (error) {
-                console.error('[Load Channel] Error:', error);
-                showAlert(`❌ Error: ${error.message}`, 'error', 6000);
-                addLogEntry(`❌ Failed to load channel: ${error.message}`, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = 'Load Channel';
+            if (urls.length === 1) {
+                if (successCount === 1) {
+                    showAlert(`✅ Loaded channel successfully`, 'success', 4000);
+                } else {
+                    showAlert(`❌ Failed to load channel`, 'error', 6000);
+                }
+            } else {
+                if (failCount === 0) {
+                    showAlert(`✅ Successfully loaded all ${successCount} channels!`, 'success', 5000);
+                } else {
+                    showAlert(`⚠️ Loaded ${successCount} channels, ${failCount} failed.`, 'warning', 6000);
+                }
             }
         }
 
