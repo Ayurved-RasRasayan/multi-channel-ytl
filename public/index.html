@@ -68,14 +68,56 @@
 
         /* ==================== MULTI-CHANNEL LAYOUT ==================== */
         
-        /* Top Section - Load Channel + Settings side by side */
+        /* Top Section - Load Channel + Settings side by side (Compact Height) */
         .top-section {
             display: grid;
             grid-template-columns: 1fr 380px;
-            gap: 15px;
-            margin-bottom: 15px;
+            gap: 10px;
+            margin-bottom: 10px;
         }
         
+        .top-section .card {
+            padding: 8px 12px;
+            margin-bottom: 0;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .top-section .card-header {
+            margin-bottom: 6px;
+            padding-bottom: 4px;
+        }
+
+        .top-section .card-title {
+            font-size: 0.95em;
+        }
+
+        .top-section .input-group {
+            margin-bottom: 0;
+            gap: 6px;
+        }
+
+        .top-section input[type="text"] {
+            padding: 5px 8px;
+            font-size: 12px;
+        }
+
+        .top-section button {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        .top-section .setting-group {
+            margin-bottom: 0;
+            padding: 0;
+            box-shadow: none;
+            background: transparent;
+        }
+
+        .top-section .setting-label {
+            margin-bottom: 4px;
+            font-size: 11px;
+        }
+
         @media (max-width: 1100px) {
             .top-section {
                 grid-template-columns: 1fr;
@@ -87,7 +129,7 @@
             display: grid;
             grid-template-columns: 280px 1fr;
             gap: 15px;
-            align-items: start;
+            align-items: stretch;
         }
         
         @media (max-width: 900px) {
@@ -165,6 +207,7 @@
             display: flex;
             flex-direction: column;
             gap: 12px;
+            height: 100%;
         }
         
         .channel-list-card {
@@ -174,6 +217,7 @@
             box-shadow: 0 8px 25px rgba(0,0,0,0.15);
             display: flex;
             flex-direction: column;
+            height: 100%;
             max-height: calc(100vh - 120px);
         }
         
@@ -198,53 +242,80 @@
         /* Channel Stats Bar in Sidebar */
         .channel-stats-bar {
             display: flex;
-            align-items: center;
             justify-content: space-between;
-            gap: 8px;
-            padding: 10px 12px;
-            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
+            align-items: center;
+            padding: 3px 5px;
+            background: #f1f3f7;
             border-radius: 8px;
             margin-bottom: 10px;
-            border: 2px solid #ddd;
+            border: 1px solid #e0e4ec;
         }
-        
-        .channel-stats-info {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            font-weight: 600;
-            color: #555;
-        }
-        
-        .channel-stats-count {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 700;
-        }
-        
-        .btn-download-all-channels {
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-            color: white;
-            padding: 6px 12px;
+
+        .sidebar-badge-btn {
+            padding: 3px 6px;
             border: none;
             border-radius: 6px;
-            font-weight: 600;
-            font-size: 11px;
+            font-weight: 700;
+            font-size: 10px;
             cursor: pointer;
-            transition: all 0.3s;
-            display: flex;
-            align-items: center;
-            gap: 4px;
+            transition: all 0.2s ease;
+            text-align: center;
             white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
         }
-        
-        .btn-download-all-channels:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(17, 153, 142, 0.4);
+
+        .badge-no-channels {
+            background: #e3f2fd;
+            color: #0f375f;
+            border: 1px solid #bbdefb;
+            border-radius: 8px;
+            cursor: default;
+            font-size: 10px;
+            padding: 3px 8px;
+            letter-spacing: 0.3px;
+        }
+
+        .badge-save-channels {
+            background: linear-gradient(135deg, #2c3e6b 0%, #1a2544 100%);
+            color: white;
+            padding: 5px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+
+        .badge-save-channels:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(44, 62, 107, 0.4);
+        }
+
+        .badge-sync-all {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            font-size: 9px;
+            padding: 3px 6px;
+            border-radius: 5px;
+            letter-spacing: 0.2px;
+        }
+
+        .badge-sync-all:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-download-all {
+            background: linear-gradient(135deg, #10b981 0%, #047857 100%);
+            color: white;
+            font-size: 9px;
+            padding: 3px 6px;
+            border-radius: 5px;
+            letter-spacing: 0.2px;
+        }
+
+        .badge-download-all:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
         }
         
         /* Scrollable Channel List */
@@ -386,6 +457,7 @@
         /* Channel Item Actions */
         .channel-item-actions {
             display: flex;
+            flex-direction: column;
             gap: 4px;
             opacity: 0;
             transition: opacity 0.2s ease;
@@ -396,15 +468,15 @@
         }
         
         .channel-item-btn {
-            width: 26px;
-            height: 26px;
+            width: 24px;
+            height: 24px;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 12px;
+            font-size: 11px;
             transition: all 0.2s ease;
             padding: 0;
         }
@@ -420,21 +492,6 @@
             transform: scale(1.1);
         }
         
-        /* Active indicator arrow */
-        .channel-active-indicator {
-            position: absolute;
-            right: 10px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #667eea;
-            font-size: 14px;
-            opacity: 0;
-            transition: opacity 0.25s ease;
-        }
-        
-        .channel-item.active .channel-active-indicator {
-            opacity: 1;
-        }
         
         /* Empty state for channel list */
         .channel-list-empty {
@@ -497,8 +554,12 @@
         .video-card {
             background: white;
             border-radius: 12px;
-            padding: 18px;
+            padding: 16px;
             box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            max-height: calc(100vh - 120px);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
         }
         
         .video-card-header {
@@ -686,16 +747,49 @@
         .video-item {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 8px 12px;
+            gap: 8px;
+            padding: 4px 8px;
             border: 1px solid #e0e0e0;
             border-radius: 6px;
-            margin-bottom: 4px;
+            margin-bottom: 3px;
             background: #fafafa;
             transition: all 0.2s ease;
             position: relative;
             overflow: hidden;
-            height: 44px; /* Fixed height for single line */
+            min-height: 38px;
+            height: auto;
+        }
+
+        .downloaded-file-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #a5d6a7;
+            padding: 1px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-top: 0;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .downloaded-file-badge .file-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .downloaded-file-badge .file-size {
+            color: #1b5e20;
+            font-weight: 600;
+            flex-shrink: 0;
         }
 
         .video-item::before {
@@ -772,7 +866,7 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 3px;
             overflow: hidden;
         }
 
@@ -857,7 +951,7 @@
             gap: 8px;
             font-size: 11px;
             color: #666;
-            flex-shrink: 0;
+            width: 100%;
         }
 
         /* Status Badge - Compact */
@@ -2070,7 +2164,7 @@
                 </div>
                 
                 <div class="input-group">
-                    <input type="text" id="channelInput" placeholder="Enter channel URL or @username (e.g., @kayakalp-i9z)">
+                    <input type="text" id="channelInput" placeholder="Enter channel URLs or @usernames (comma or newline separated)">
                     <button class="btn-primary" onclick="loadChannel()" id="loadBtn">Load Channel</button>
                 </div>
             </div>
@@ -2100,14 +2194,6 @@
                                 💾 Save
                             </button>
                         </div>
-                        <div class="setting-info" id="folderInfo">
-                            Loading...
-                        </div>
-                    </div>
-
-                    <!-- Current Status -->
-                    <div class="setting-status" id="folderStatus">
-                        <span>ℹ️ Configure your download folder above</span>
                     </div>
                 </div>
             </div>
@@ -2124,17 +2210,24 @@
                     <!-- Channel List Header -->
                     <div class="channel-list-header">
                         <h3 class="channel-list-title">📂 Channels</h3>
+                        <button class="sidebar-badge-btn badge-save-channels" id="saveChannelsBtn" onclick="saveChannelsToDb()" title="Save channel list to database">
+                            💾 Save
+                        </button>
                     </div>
                     
-                    <!-- Channel Stats Bar: All count + Download All -->
+                    <!-- Channel Stats Bar -->
                     <div class="channel-stats-bar" id="channelListStatsBar">
-                        <div class="channel-stats-info">
-                            <span>📊 All:</span>
-                            <span class="channel-stats-count" id="totalChannelsCount">0</span>
+                        <div class="sidebar-badge-btn badge-no-channels" title="Total number of channels">
+                            CHANNEL:<span id="totalChannelsCount">0</span>
                         </div>
-                        <button class="btn-download-all-channels" onclick="downloadAllChannels()" title="Download videos from all channels">
-                            ⬇️ Download All
-                        </button>
+                        <div style="display: flex; gap: 3px; align-items: center;">
+                            <button class="sidebar-badge-btn badge-sync-all" onclick="syncDownloadStatus()" title="Sync all channels">
+                                SYNC ALL
+                            </button>
+                            <button class="sidebar-badge-btn badge-download-all" onclick="downloadAllChannels()" title="Download videos from all channels">
+                                Download All
+                            </button>
+                        </div>
                     </div>
                     
                     <!-- Scrollable Channel List -->
@@ -2158,7 +2251,6 @@
                                     <span class="channel-item-videos">137 videos</span>
                                 </div>
                             </div>
-                            <span class="channel-active-indicator">◀</span>
                             <div class="channel-item-actions">
                                 <button class="channel-item-btn channel-item-btn-delete" onclick="event.stopPropagation(); deleteChannel('xxx')">🗑</button>
                             </div>
@@ -2173,9 +2265,16 @@
                 <!-- Videos List Card -->
                 <div class="video-card" id="videosCard" style="display: none;">
                     <div class="video-card-header">
-                        <h2 class="video-card-title">
-                            📹 Videos <span class="current-channel-name" id="currentChannelTitle">@SelectChannel</span>
-                        </h2>
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                            <h2 class="video-card-title">
+                                📹 Videos <span class="current-channel-name" id="currentChannelTitle">@SelectChannel</span>
+                            </h2>
+                            <div id="headerChannelBadgeContainer">
+                                <span class="stat-badge stat-downloaded" style="font-size: 11px; padding: 2px 8px;">
+                                    ✅ Downloaded: <strong id="headerDownloadRatioText">0/0</strong>
+                                </span>
+                            </div>
+                        </div>
                         <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                             <button class="btn-sync" id="syncBtn" onclick="syncDownloadStatus()">
                                 <span id="syncBtnIcon">🔄</span>
@@ -2229,6 +2328,9 @@
                         <div class="batch-info">
                             <label><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> Select All</label>
                             <span id="selectedCount">0 selected</span>
+                            <span class="stat-badge stat-downloaded" id="downloadRatioBadge" style="cursor: pointer;" onclick="setSyncFilter('downloaded')">
+                                ✅ Downloaded: <strong id="downloadRatioText">0/0</strong>
+                            </span>
                         </div>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                             <button class="btn-success btn-small" onclick="downloadSelected()" id="downloadSelectedBtn" disabled>
@@ -2385,6 +2487,7 @@
          * @param {Object} channelData - The channel object from API response
          */
         function addChannelToList(channelData) {
+            const channelVideos = channelData.videos || channelData.data?.videos || [];
             // Check if channel already exists (by ID or URL)
             const existingIndex = channels.findIndex(ch => 
                 ch.id === channelData.id || ch.url === channelData.url
@@ -2395,7 +2498,8 @@
                 channels[existingIndex] = {
                     ...channels[existingIndex],
                     ...channelData,
-                    videoCount: channelData.videos ? channelData.videos.length : 0
+                    videoCount: channelVideos.length || channels[existingIndex].videoCount || 0,
+                    videos: channelVideos.length ? channelVideos : (channels[existingIndex].videos || [])
                 };
             } else {
                 // Add new channel
@@ -2404,8 +2508,9 @@
                     name: channelData.name,
                     url: channelData.url,
                     handle: extractHandle(channelData.url || channelData.name),
-                    videoCount: channelData.videos ? channelData.videos.length : 0,
-                    data: channelData
+                    videoCount: channelVideos.length,
+                    data: channelData,
+                    videos: channelVideos
                 });
             }
             
@@ -2447,7 +2552,9 @@
             const totalCountEl = document.getElementById('totalChannelsCount');
             
             // Update total count
-            totalCountEl.textContent = channels.length;
+            if (totalCountEl) {
+                totalCountEl.textContent = channels.length;
+            }
             
             // Show/hide empty state
             if (channels.length === 0) {
@@ -2464,6 +2571,12 @@
             let html = '';
             channels.forEach(channel => {
                 const isActive = channel.id === activeChannelId;
+                const channelVideos = channel.videos || (channel.data && channel.data.videos) || [];
+                const total = channelVideos.length || channel.videoCount || 0;
+                const downloaded = channelVideos.filter(v =>
+                    v.downloadStatus === 'completed' || v.downloadStatus === 'skipped' || v.syncStatus === 'downloaded'
+                ).length;
+
                 html += `
                     <div class="channel-item ${isActive ? 'active' : ''}" 
                          data-channel-id="${channel.id}" 
@@ -2471,11 +2584,10 @@
                         <div class="channel-item-icon">📺</div>
                         <div class="channel-item-content">
                             <div class="channel-item-name">${escapeHtml(channel.handle || channel.name)}</div>
-                            <div class="channel-item-meta">
-                                <span class="channel-item-videos">${channel.videoCount || 0} videos</span>
+                            <div class="channel-item-meta" style="margin-top: 2px;">
+                                <span class="channel-item-videos">${downloaded}/${total} videos</span>
                             </div>
                         </div>
-                        <span class="channel-active-indicator">◀</span>
                         <div class="channel-item-actions">
                             <button class="channel-item-btn channel-item-btn-delete" 
                                     onclick="event.stopPropagation(); deleteChannel('${channel.id}')" 
@@ -2508,6 +2620,11 @@
                 return;
             }
             
+            // Reset sync state for new channel unless synced
+            syncData = null;
+            const syncStatsBar = document.getElementById('syncStatsBar');
+            if (syncStatsBar) syncStatsBar.style.display = 'none';
+
             // Update active state
             activeChannelId = channelId;
             currentChannel = channel.data || channel;
@@ -2518,12 +2635,17 @@
             // Re-render channel list to update active state
             renderChannelList();
             
-            // ✅ OPTION B: Update UI to reflect NEW channel's selection state (don't clear!)
-            // The new channel's selections will be shown (preserved from before if they exist)
+            // Update UI to reflect NEW channel's selection state
             updateSelectedCount();
             
-            // Load videos for this channel
-            await loadChannelVideos(channelId);
+            // ⭐ INSTANTLY RENDER CACHED VIDEOS FROM MEMORY/LOCALSTORAGE (0ms delay)
+            const cachedVideos = channel.videos || (channel.data && channel.data.videos) || [];
+            if (cachedVideos.length > 0) {
+                videos = cachedVideos;
+                document.getElementById('videosCard').style.display = 'block';
+                updateChannelStats();
+                renderVideos();
+            }
             
             // Update "Select All" checkbox based on new channel's actual state
             const selection = getActiveSelection();
@@ -2539,6 +2661,9 @@
             closeMobileSidebar();
             
             addLogEntry(`📂 Switched to channel: ${channel.name}`, 'info');
+
+            // Non-blocking background fetch to sync/update videos if needed
+            loadChannelVideos(channelId).catch(err => console.warn('[SelectChannel] Background load:', err));
         }
         
         /**
@@ -2572,9 +2697,56 @@
             showAlert(`Removed "${channel.name}" from list`, 'info', 3000);
             addLogEntry(`🗑️ Removed channel: ${channel.name}`, 'info');
         }
+
+        /**
+         * Stop all active and queued downloads for a specific channel
+         * @param {string} channelId - ID of the channel to stop downloads for
+         */
+        async function stopChannelDownloads(channelId) {
+            const channel = channels.find(ch => ch.id === channelId);
+            const channelName = channel ? channel.name : channelId;
+
+            try {
+                console.log(`[Channel] ⏸️ Stopping all downloads for channel: ${channelName} (${channelId})`);
+
+                const response = await fetch(`${API_BASE}/api/channels/${channelId}/stop`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showAlert(`⏸️ Stopped ${result.stoppedCount} downloads for ${channelName}`, 'info', 3000);
+                    addLogEntry(`⏸️ Stopped ${result.stoppedCount} downloads for channel: ${channelName}`, 'info');
+                    refreshQueue();
+
+                    // Mark matching local video objects as cancelled
+                    if (channel && channel.videos) {
+                        channel.videos.forEach(v => {
+                            if (v.downloadStatus === 'downloading' || v.downloadStatus === 'queued') {
+                                v.downloadStatus = 'cancelled';
+                            }
+                        });
+                    }
+                    if (activeChannelId === channelId) {
+                        videos.forEach(v => {
+                            if (v.downloadStatus === 'downloading' || v.downloadStatus === 'queued') {
+                                v.downloadStatus = 'cancelled';
+                            }
+                        });
+                        renderVideos();
+                    }
+                } else {
+                    showAlert(`⚠️ Stop channel downloads failed: ${result.error}`, 'warning', 4000);
+                }
+            } catch (error) {
+                console.error('[Channel] Error stopping channel downloads:', error);
+                showAlert(`❌ Error stopping channel downloads: ${error.message}`, 'error', 4000);
+            }
+        }
         
         /**
-         * Download all videos from all channels
+         * Download all remaining (unsynced/undownloaded) videos from all channels
          */
         async function downloadAllChannels() {
             if (channels.length === 0) {
@@ -2582,31 +2754,77 @@
                 return;
             }
             
-            if (!confirm(`Start downloading videos from all ${channels.length} channels?`)) {
+            if (!confirm(`Start downloading all remaining unsynced videos from all ${channels.length} channels?`)) {
                 return;
             }
             
-            showAlert(`⬇️ Starting downloads for ${channels.length} channels...`, 'info', 5000);
-            addLogEntry(`⬇️ Starting batch download for all ${channels.length} channels`, 'info');
+            showAlert(`⬇️ Queuing remaining videos across all channels...`, 'info', 5000);
+            addLogEntry(`⬇️ Starting download for all unsynced/remaining videos in all channels`, 'info');
             
-            // This would call an API endpoint to queue downloads for all channels
-            // For now, just show the message
-            try {
-                const response = await fetch(`${API_BASE}/api/download/all-channels`, {
-                    method: 'POST'
-                });
-                const data = await response.json();
-                
-                if (data.success) {
-                    showAlert(`✅ Queued ${data.totalVideos} videos for download`, 'success');
-                    addLogEntry(`✅ Queued ${data.totalVideos} videos from all channels`, 'success');
-                    refreshQueue();
-                } else {
-                    throw new Error(data.error || 'Failed to start downloads');
+            let totalQueued = 0;
+            let errorCount = 0;
+
+            for (const ch of channels) {
+                let chVideos = ch.videos || (ch.data && ch.data.videos) || [];
+                if (!chVideos || chVideos.length === 0) {
+                    try {
+                        const vRes = await fetch(`${API_BASE}/api/channels/${ch.id}/videos`);
+                        const vData = await vRes.json();
+                        if (vData.success && vData.videos) {
+                            chVideos = vData.videos;
+                            ch.videos = vData.videos;
+                        }
+                    } catch (e) {
+                        console.warn('[downloadAllChannels] Could not fetch videos for channel', ch.id, e);
+                    }
                 }
-            } catch (error) {
-                showAlert(`Error: ${error.message}`, 'error');
-                addLogEntry(`❌ Error starting batch download: ${error.message}`, 'error');
+
+                const remaining = chVideos.filter(v =>
+                    v.syncStatus !== 'downloaded' &&
+                    v.downloadStatus !== 'completed' &&
+                    v.downloadStatus !== 'skipped' &&
+                    v.downloadStatus !== 'downloading' &&
+                    v.downloadStatus !== 'queued'
+                );
+
+                for (const video of remaining) {
+                    try {
+                        const response = await fetch(`${API_BASE}/api/download`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                videoId: video.id || video.videoId,
+                                title: video.displayTitle || video.title,
+                                finalFilename: video.finalFilename || null,
+                                downloadFilename: video.downloadFilename || null,
+                                channelId: ch.id,
+                                channelName: ch.name,
+                                format: 'best',
+                                quality: 'lowest'
+                            })
+                        });
+
+                        const result = await response.json();
+                        if (result.status === 'queued' || result.downloadId) {
+                            video.downloadStatus = 'queued';
+                            video.downloadId = result.downloadId;
+                            totalQueued++;
+                        }
+                    } catch (err) {
+                        errorCount++;
+                    }
+                }
+            }
+
+            renderVideos();
+            refreshQueue();
+            startPolling();
+
+            if (totalQueued > 0) {
+                showAlert(`✅ Queued ${totalQueued} remaining videos from all channels`, 'success');
+                addLogEntry(`✅ Queued ${totalQueued} remaining videos across all channels`, 'success');
+            } else {
+                showAlert(`🎉 All available videos across channels are already downloaded or queued`, 'info');
             }
         }
         
@@ -2703,8 +2921,8 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    currentChannel = data.channel;
-                    videos = data.videos || [];
+                    currentChannel = data.channel || currentChannel;
+                    videos = data.videos || videos;
                     
                     console.log(`[Load Videos] Loaded ${videos.length} videos for channel ${channelId}`);
                     
@@ -2712,7 +2930,8 @@
                     const channelIndex = channels.findIndex(ch => ch.id === channelId);
                     if (channelIndex >= 0) {
                         channels[channelIndex].videoCount = videos.length;
-                        channels[channelIndex].data = currentChannel;
+                        channels[channelIndex].videos = videos;
+                        if (data.channel) channels[channelIndex].data = data.channel;
                         renderChannelList();
                     }
                     
@@ -2748,6 +2967,16 @@
                 <button class="stat-badge stat-missing ${currentSyncFilter === 'remaining' ? 'active' : ''}" style="cursor:pointer;" onclick="setSyncFilter('remaining')">🔴 ${remaining}</button>
             `;
             
+            // Update downloaded/total ratio badges
+            const ratioText = document.getElementById('downloadRatioText');
+            if (ratioText) {
+                ratioText.textContent = `${downloaded}/${total}`;
+            }
+            const headerRatioText = document.getElementById('headerDownloadRatioText');
+            if (headerRatioText) {
+                headerRatioText.textContent = `${downloaded}/${total}`;
+            }
+
             // Also update sync stats if visible
             const syncTotal = document.getElementById('syncTotal');
             if (syncTotal) {
@@ -2756,6 +2985,8 @@
                 document.getElementById('syncRemaining').textContent = remaining;
                 document.getElementById('syncPercentage').textContent = percentage;
             }
+
+            renderChannelList();
         }
 
         // ==================== LOGGING SYSTEM ====================
@@ -2874,13 +3105,19 @@
                 container.innerHTML = '<div class="log-entry"><span class="log-info">Waiting for server logs...</span></div>';
                 return;
             }
+
+            let hasFinishedDownloadLog = false;
             
             const newHtml = logs.map(log => {
                 const time = new Date(log.time).toLocaleTimeString();
+                const msg = log.message || '';
+                if (msg.includes('Downloaded') || msg.includes('Completed') || msg.includes('finished') || msg.includes('Saved as')) {
+                    hasFinishedDownloadLog = true;
+                }
                 return `
                     <div class="log-entry">
                         <span class="log-time">${time}</span>
-                        <span class="log-${log.type}">${escapeHtml(log.message.substring(0, 200))}</span>
+                        <span class="log-${log.type}">${escapeHtml(msg.substring(0, 200))}</span>
                     </div>
                 `;
             }).join('');
@@ -2889,6 +3126,10 @@
                 container.innerHTML = newHtml;
             } else {
                 container.insertAdjacentHTML('beforeend', newHtml);
+            }
+
+            if (hasFinishedDownloadLog) {
+                syncDownloadStatus().catch(err => console.warn('[LogSync] Sync:', err));
             }
             
             // Scroll inner container to bottom (ONLY scroll now)
@@ -2952,10 +3193,18 @@
         
         async function loadChannel() {
             const input = document.getElementById('channelInput');
-            const url = input.value.trim();
+            const rawValue = input.value.trim();
             
-            if (!url) {
+            if (!rawValue) {
                 showAlert('Please enter a channel URL or username', 'warning');
+                return;
+            }
+
+            // Split by commas or newlines and clean up entries
+            const urls = rawValue.split(/[\n,]+/).map(u => u.trim()).filter(u => u.length > 0);
+
+            if (urls.length === 0) {
+                showAlert('Please enter valid channel URLs or usernames', 'warning');
                 return;
             }
 
@@ -2963,55 +3212,66 @@
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Loading...';
 
-            showAlert('📡 Fetching channel information...', 'info');
-            addLogEntry(`📡 Loading channel: ${url}`, 'info');
+            let firstLoadedChannelId = null;
+            let successCount = 0;
+            let failCount = 0;
 
-            try {
-                const response = await fetch(`${API_BASE}/api/channels`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: url })
-                });
+            for (let i = 0; i < urls.length; i++) {
+                const targetUrl = urls[i];
+                const progressMsg = urls.length > 1 ? ` (${i + 1}/${urls.length})` : '';
 
-                const data = await response.json();
+                showAlert(`📡 Fetching channel${progressMsg}: ${targetUrl}...`, 'info');
+                addLogEntry(`📡 Loading channel${progressMsg}: ${targetUrl}`, 'info');
 
-                if (!response.ok || !data.success) {
-                    throw new Error(data.error || 'Failed to load channel');
+                try {
+                    const response = await fetch(`${API_BASE}/api/channels`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: targetUrl })
+                    });
+
+                    const data = await response.json();
+
+                    if (!response.ok || !data.success) {
+                        throw new Error(data.error || 'Failed to load channel');
+                    }
+
+                    const loadedChannel = data.channel;
+                    addChannelToList(loadedChannel);
+                    successCount++;
+
+                    if (!firstLoadedChannelId) {
+                        firstLoadedChannelId = loadedChannel.id;
+                    }
+
+                    addLogEntry(`✅ Channel loaded: ${loadedChannel.name} (${loadedChannel.videos?.length || 0} videos)`, 'success');
+                } catch (error) {
+                    failCount++;
+                    console.error(`[Load Channel] Error loading ${targetUrl}:`, error);
+                    addLogEntry(`❌ Failed to load ${targetUrl}: ${error.message}`, 'error');
                 }
+            }
 
-                currentChannel = data.channel;
-                videos = currentChannel.videos || [];
+            btn.disabled = false;
+            btn.innerHTML = 'Load Channel';
 
-                // Set as active channel
-                activeChannelId = currentChannel.id;
-                
-                // Add/update channel in list
-                addChannelToList(currentChannel);
-
-                // Update UI
-                document.getElementById('videosCard').style.display = 'block';
-                document.getElementById('channelInput').value = currentChannel.url || url;
-                document.getElementById('currentChannelTitle').textContent = 
-                    extractHandle(currentChannel.url || currentChannel.name);
-
-                // Update stats
-                updateChannelStats();
-
-                renderVideos();
-
-                showAlert(`✅ Loaded "${currentChannel.name}" with ${videos.length} videos`, 'success', 4000);
-                addLogEntry(`✅ Channel loaded: ${currentChannel.name} (${videos.length} videos)`, 'success');
-
-                // Start queue polling if there are active downloads
+            if (firstLoadedChannelId) {
+                selectChannel(firstLoadedChannelId);
                 startPolling();
+            }
 
-            } catch (error) {
-                console.error('[Load Channel] Error:', error);
-                showAlert(`❌ Error: ${error.message}`, 'error', 6000);
-                addLogEntry(`❌ Failed to load channel: ${error.message}`, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = 'Load Channel';
+            if (urls.length === 1) {
+                if (successCount === 1) {
+                    showAlert(`✅ Loaded channel successfully`, 'success', 4000);
+                } else {
+                    showAlert(`❌ Failed to load channel`, 'error', 6000);
+                }
+            } else {
+                if (failCount === 0) {
+                    showAlert(`✅ Successfully loaded all ${successCount} channels!`, 'success', 5000);
+                } else {
+                    showAlert(`⚠️ Loaded ${successCount} channels, ${failCount} failed.`, 'warning', 6000);
+                }
             }
         }
 
@@ -3057,24 +3317,32 @@
 
             // Group by sync status if we have sync data
             if (syncData && currentSyncFilter === 'all') {
-                const downloaded = videosToRender.filter(v => v.syncStatus === 'downloaded');
-                const newVideos = videosToRender.filter(v => v.syncStatus === 'new');
+                const downloaded = videosToRender.filter(v =>
+                    v.syncStatus === 'downloaded' || v.downloadStatus === 'completed' || v.downloadStatus === 'skipped'
+                );
+                const newVideos = videosToRender.filter(v =>
+                    v.syncStatus !== 'downloaded' && v.downloadStatus !== 'completed' && v.downloadStatus !== 'skipped'
+                );
                 
                 let html = '';
                 
                 if (downloaded.length > 0) {
                     html += `<div class="sync-section-header downloaded-section">✅ Downloaded (${downloaded.length})</div>`;
-                    html += downloaded.map((video, idx) => renderVideoItem(video, videos.indexOf(video))).join('');
+                    html += downloaded.map((video) => renderVideoItem(video, videos.indexOf(video))).join('');
                 }
                 
                 if (newVideos.length > 0) {
                     html += `<div class="sync-section-header new-section">🔴 New/Remaining (${newVideos.length})</div>`;
-                    html += newVideos.map((video, idx) => renderVideoItem(video, videos.indexOf(video))).join('');
+                    html += newVideos.map((video) => renderVideoItem(video, videos.indexOf(video))).join('');
+                }
+
+                if (!html) {
+                    html = videosToRender.map((video) => renderVideoItem(video, videos.indexOf(video))).join('');
                 }
                 
                 container.innerHTML = html;
             } else {
-                container.innerHTML = videosToRender.map((video, idx) => 
+                container.innerHTML = videosToRender.map((video) =>
                     renderVideoItem(video, videos.indexOf(video))
                 ).join('');
             }
@@ -3099,7 +3367,7 @@
             let statusBadge = '';
             if (video.downloadStatus === 'downloading') {
                 statusBadge = `<span class="status-badge status-downloading">▶️ ${video.progress || 0}%</span>`;
-            } else if (video.downloadStatus === 'completed') {
+            } else if (video.downloadStatus === 'completed' || video.syncStatus === 'downloaded') {
                 statusBadge = `<span class="status-badge status-completed">✅ Done</span>`;
             } else if (video.downloadStatus === 'skipped') {
                 statusBadge = `<span class="status-badge status-skipped">⏭ Skip</span>`;
@@ -3112,67 +3380,56 @@
             if (video.isDuplicate) extraBadges += `<span class="duplicate-badge">DUPE</span>`;
             if (video.hasZPrefix) extraBadges += `<span class="z-prefix-badge">Z-PFX</span>`;
             
-            // Progress bar for downloading
-            let progressBar = '';
-            if (video.downloadStatus === 'downloading' && video.progress) {
-                const progressClass = video.progress >= 100 ? 'complete' : 'active';
-                progressBar = `
-                    <div class="progress-container">
-                        <div class="progress-bar">
-                            <div class="progress-fill ${progressClass}" style="width: ${Math.min(video.progress, 100)}%"></div>
-                        </div>
-                        <div class="progress-details">
-                            <span class="progress-percent">${video.progress}%</span>
-                            ${video.speed ? `<span class="progress-speed">@${video.speed}</span>` : ''}
-                            ${video.downloadedSize ? `<span class="progress-size">${video.downloadedSize}${video.totalSize ? '/' + video.totalSize : ''}</span>` : ''}
-                        </div>
+            // Inline progress bar next to video duration/time matching design
+            let inlineProgressBar = '';
+            if (video.downloadStatus === 'downloading' && video.progress !== undefined && video.progress !== null) {
+                const currentProgress = video.progress || 0;
+                const progressClass = currentProgress >= 100 ? 'complete' : 'active';
+                inlineProgressBar = `
+                    <div class="inline-progress-container" style="flex: 1; position: relative; height: 12px; background: #e0e0e0; border-radius: 6px; display: flex; align-items: center; margin-left: 6px; overflow: hidden;">
+                        <div class="inline-progress-fill ${progressClass}" style="width: ${Math.min(currentProgress, 100)}%; height: 100%; background: linear-gradient(90deg, #11998e 0%, #38ef7d 100%); border-radius: 6px; transition: width 0.3s ease;"></div>
+                        <span style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 13px; font-weight: 800; color: #2563eb; text-shadow: 0 0 2px rgba(255,255,255,0.9); z-index: 2; pointer-events: none;">${currentProgress}%</span>
                     </div>
                 `;
             }
             
-            // File info for completed/skipped
-            let fileInfo = '';
-            if ((video.downloadStatus === 'completed' || video.downloadStatus === 'skipped') && video.filePath) {
-                fileInfo = `
-                    <div class="file-info">
-                        <span class="file-info-icon">💾</span>
-                        <div class="file-info-details">
-                            <span class="file-info-item">📁 ${escapeHtml(video.filePath.split('/').pop())}</span>
-                            ${video.fileSize ? `<span class="file-info-item">📏 ${video.fileSize}</span>` : ''}
-                        </div>
+            // Consolidated, elegant downloaded file badge
+            let fileBadge = '';
+            const isDoneObj = video.downloadStatus === 'completed' || video.downloadStatus === 'skipped' || video.syncStatus === 'downloaded';
+            if (isDoneObj) {
+                const fileNameToDisplay = video.renamedFilename || (video.filePath ? video.filePath.split(/[/\\]/).pop() : sanitizedTitle);
+                const fullPath = video.filePath || '';
+                fileBadge = `
+                    <div class="downloaded-file-badge" title="${escapeHtml(fullPath)}">
+                        <span class="file-icon">💾</span>
+                        <span class="file-name">${escapeHtml(fileNameToDisplay)}</span>
+                        ${video.fileSize ? `<span class="file-size">(${video.fileSize})</span>` : ''}
                     </div>
                 `;
             }
-            
-            // Renamed filename display
-            let renamedDisplay = '';
-            if (video.renamedFilename) {
-                renamedDisplay = `<div class="renamed-filename">💾 Saved as: ${escapeHtml(video.renamedFilename)}</div>`;
-            }
-            
+
             return `
                 <div class="video-item ${statusClass}" data-index="${originalIndex}">
-                    <input type="checkbox" class="video-checkbox" ${isChecked ? 'checked' : ''} onchange="toggleVideoSelection(${originalIndex})">
                     <div class="video-info">
                         <div class="video-titles-container">
                             <div class="video-title-original" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
                             <div class="video-title-sanitized" title="${escapeHtml(sanitizedTitle)}">${escapeHtml(sanitizedTitle)}</div>
                         </div>
-                        ${extraBadges ? `<div>${extraBadges}</div>` : ''}
                         <div class="video-meta">
+                            <input type="checkbox" class="video-checkbox" ${isChecked ? 'checked' : ''} onchange="toggleVideoSelection(${originalIndex})">
                             ${formatDuration(video.duration)}
                             ${formatNumber(video.viewCount) ? `👁 ${formatNumber(video.viewCount)}` : ''}
                             ${statusBadge}
+                            ${fileBadge}
+                            ${inlineProgressBar}
+                            ${extraBadges}
+                            <div class="video-actions" style="margin-left: auto;">
+                                ${!video.downloadStatus || video.downloadStatus === 'error'
+                                    ? `<button class="btn-primary btn-small" onclick="downloadVideo(${originalIndex})">⬇️</button>`
+                                    : ''}
+                            </div>
                         </div>
                     </div>
-                    <div class="video-actions">
-                        ${!video.downloadStatus || video.downloadStatus === 'error' 
-                            ? `<button class="btn-primary btn-small" onclick="downloadVideo(${originalIndex})">⬇️</button>` 
-                            : ''}
-                    </div>
-                    ${progressBar}
-                    ${fileInfo}
-                    ${renamedDisplay}
                 </div>
             `;
         }
@@ -3227,82 +3484,84 @@
         // ==================== SYNC FUNCTIONS ====================
         
         async function syncDownloadStatus() {
-            if (!currentChannel) {
-                showAlert('Please load a channel first', 'warning');
-                return;
-            }
-            
             const btn = document.getElementById('syncBtn');
             const icon = document.getElementById('syncBtnIcon');
             const text = document.getElementById('syncBtnText');
             
-            btn.disabled = true;
-            icon.innerHTML = '<span class="sync-spinner"></span>';
-            text.textContent = 'Syncing...';
+            if (btn) {
+                btn.disabled = true;
+                if (icon) icon.innerHTML = '<span class="sync-spinner"></span>';
+                if (text) text.textContent = 'Syncing All...';
+            }
             
-            addLogEntry('🔄 Starting sync check...', 'info');
+            addLogEntry('🔄 Starting sync check for all channels...', 'info');
             
             try {
-                const response = await fetch(`${API_BASE}/api/channels/${currentChannel.id}/sync`, {
-                    method: 'POST'
+                const response = await fetch(`${API_BASE}/api/channels/sync-all`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channels: channels })
                 });
                 
                 const data = await response.json();
                 
-                if (data.success) {
-                    syncData = data;
-                    
-                    // Update video sync status
-                    if (data.videoStatuses) {
-                        data.videoStatuses.forEach(status => {
-                            const video = videos.find(v => v.id === status.videoId || v.videoId === status.videoId);
-                            if (video) {
-                                video.syncStatus = status.exists ? 'downloaded' : 'new';
-                                if (status.filename) {
-                                    video.finalFilename = status.filename;
-                                    video.filePath = status.filePath;
-                                }
+                if (data.success && data.results) {
+                    Object.keys(data.results).forEach(channelId => {
+                        const channelResult = data.results[channelId];
+                        const channelObj = channels.find(ch => ch.id === channelId);
+
+                        if (channelObj) {
+                            const targetVideos = channelObj.videos || (channelObj.data && channelObj.data.videos) || [];
+                            if (channelResult.videoStatuses) {
+                                channelResult.videoStatuses.forEach(status => {
+                                    const video = targetVideos.find(v => (v.id || v.videoId) === status.videoId);
+                                    if (video) {
+                                        video.syncStatus = status.exists ? 'downloaded' : 'new';
+                                        if (status.filename) {
+                                            video.finalFilename = status.filename;
+                                            video.filePath = status.filePath;
+                                        }
+                                        if (status.exists) {
+                                            video.downloadStatus = 'completed';
+                                        } else {
+                                            if (video.downloadStatus === 'completed') {
+                                                video.downloadStatus = null;
+                                            }
+                                        }
+                                    }
+                                });
                             }
-                        });
+                        }
+                    });
+
+                    saveChannels();
+
+                    if (currentChannel && data.results[currentChannel.id]) {
+                        syncData = data.results[currentChannel.id];
+                        document.getElementById('syncStatsBar').style.display = 'flex';
                     }
-                    
-                    // Show sync stats bar
-                    document.getElementById('syncStatsBar').style.display = 'flex';
-                    
-                    // Update counts
-                    const total = videos.length;
-                    const downloaded = videos.filter(v => v.syncStatus === 'downloaded').length;
-                    const remaining = total - downloaded;
-                    const percentage = total > 0 ? Math.round((downloaded / total) * 100) : 0;
-                    
-                    document.getElementById('syncTotal').textContent = total;
-                    document.getElementById('syncDownloaded').textContent = downloaded;
-                    document.getElementById('syncRemaining').textContent = remaining;
-                    document.getElementById('syncPercentage').textContent = percentage;
-                    
-                    // Also update main stats
+
+                    renderChannelList();
                     updateChannelStats();
-                    
                     renderVideos();
                     
-                    showAlert(`✅ Sync complete: ${downloaded}/${total} downloaded (${percentage}%)`, 'success', 4000);
-                    addLogEntry(`✅ Sync complete: ${downloaded}/${total} videos downloaded (${percentage}%)`, 'success');
+                    showAlert(`✅ Sync complete for all channels`, 'success', 4000);
+                    addLogEntry(`✅ Sync complete for all channels`, 'success');
                     
-                    // Start auto-refresh timer
                     startSyncTimer();
-                    
                 } else {
-                    throw new Error(data.error || 'Sync failed');
+                    throw new Error(data.error || 'Sync all failed');
                 }
-                
             } catch (error) {
-                console.error('[Sync] Error:', error);
+                console.error('[Sync All] Error:', error);
                 showAlert(`❌ Sync failed: ${error.message}`, 'error', 5000);
                 addLogEntry(`❌ Sync failed: ${error.message}`, 'error');
             } finally {
-                btn.disabled = false;
-                icon.textContent = '🔄';
-                text.textContent = 'Sync Status';
+                if (btn) {
+                    btn.disabled = false;
+                    if (icon) icon.textContent = '🔄';
+                    if (text) text.textContent = 'Sync Status';
+                }
             }
         }
         
@@ -3435,6 +3694,7 @@
 
                 if (result.status === 'skipped') {
                     video.downloadStatus = 'skipped';
+                    video.syncStatus = 'downloaded';
                     video.fileSize = result.download?.sizeMB;
                     video.filePath = result.download?.filename;
                     video.renamedFilename = result.download?.renamedFilename || result.download?.filename;
@@ -3447,14 +3707,17 @@
                     video.downloadStatus = 'queued';
                     video.downloadId = result.downloadId;
                     addLogEntry(`⏳ Queued: ${(video.displayTitle || video.title).substring(0, 30)}...`, 'info');
+                    startPolling();
                 } else {
                     video.downloadStatus = 'completed';
+                    video.syncStatus = 'downloaded';
                     video.fileSize = result.download?.sizeMB;
                     video.filePath = result.download?.filename;
                     video.renamedFilename = result.download?.renamedFilename || result.download?.filename;
                     addLogEntry(`✅ Completed: ${(video.displayTitle || video.title).substring(0, 30)}...`, 'success');
                 }
 
+                updateChannelStats();
                 renderVideos();
                 refreshQueue();
 
@@ -3628,70 +3891,76 @@
             }
         }
 
+        let lastCompletedCount = -1;
+
         async function refreshQueue() {
             try {
-                // ✅ FIXED: Use correct endpoint (was /api/download/queue which doesn't exist)
                 const response = await fetch(`${API_BASE}/api/download-queue`);
                 const data = await response.json();
                 
-                console.log('[Queue] Raw API response:', data);
+                let activeItems = [];
+                let completedItems = [];
                 
-                // ✅ FIXED: Handle multiple possible response formats
-                let queueData = [];
-                
-                if (data.success) {
-                    // Format 1: { success: true, queue: [...] }
+                if (data.success && data.queue) {
                     if (Array.isArray(data.queue)) {
-                        queueData = data.queue;
+                        activeItems = data.queue;
+                    } else if (typeof data.queue === 'object') {
+                        activeItems = data.queue.active || [];
+                        completedItems = data.queue.completed || [];
                     }
-                    // Format 2: { success: true, data: [...] }
-                    else if (Array.isArray(data.data)) {
-                        queueData = data.data;
-                    }
-                    // Format 3: { success: true, downloads: [...] }
-                    else if (Array.isArray(data.downloads)) {
-                        queueData = data.downloads;
-                    }
-                    // Format 4: Response IS the array
-                    else if (Array.isArray(data)) {
-                        queueData = data;
-                    }
-                    // Fallback: Try to find any array property
-                    else {
-                        console.warn('[Queue] Unexpected response format, searching for array...');
-                        for (const key of Object.keys(data)) {
-                            if (key !== 'success' && Array.isArray(data[key])) {
-                                queueData = data[key];
-                                console.log(`[Queue] Found array in property "${key}"`);
-                                break;
+                } else if (Array.isArray(data)) {
+                    activeItems = data;
+                }
+
+                renderQueue(activeItems);
+
+                const allItems = [...activeItems, ...completedItems];
+                let statusChanged = false;
+
+                allItems.forEach(item => {
+                    const video = videos.find(v =>
+                        (item.videoId && (v.id === item.videoId || v.videoId === item.videoId)) ||
+                        (item.url && v.url === item.url) ||
+                        (item.title && (v.title === item.title || v.displayTitle === item.title))
+                    );
+                    if (video) {
+                        const isDone = item.status === 'completed' || item.progress >= 100;
+                        const isSkip = item.status === 'skipped';
+                        const isDownloading = item.status === 'downloading';
+                        const isQueued = item.status === 'queued' || item.status === 'waiting';
+
+                        if (isDone || isSkip) {
+                            if (video.downloadStatus !== 'completed' && video.downloadStatus !== 'skipped') {
+                                video.downloadStatus = isSkip ? 'skipped' : 'completed';
+                                video.syncStatus = 'downloaded';
+                                statusChanged = true;
+                            }
+                        } else if (isDownloading) {
+                            if (video.downloadStatus !== 'downloading' || video.progress !== item.progress) {
+                                video.downloadStatus = 'downloading';
+                                video.progress = item.progress || 0;
+                                video.speed = item.speed;
+                                statusChanged = true;
+                            }
+                        } else if (isQueued) {
+                            if (video.downloadStatus !== 'queued') {
+                                video.downloadStatus = 'queued';
+                                statusChanged = true;
                             }
                         }
                     }
-                    
-                    console.log('[Queue] Parsed queue data:', queueData);
-                    renderQueue(queueData);
-                    
-                    // Update video statuses based on queue
-                    if (queueData && Array.isArray(queueData)) {
-                        queueData.forEach(item => {
-                            const video = videos.find(v => 
-                                (v.id && v.id === item.videoId) || 
-                                (v.videoId && v.videoId === item.videoId) ||
-                                (v.title && v.title === item.title)
-                            );
-                            if (video) {
-                                if (item.isActive) {
-                                    video.downloadStatus = 'downloading';
-                                    video.progress = item.progress || 0;
-                                    video.speed = item.speed;
-                                } else if (item.isWaiting) {
-                                    video.downloadStatus = 'queued';
-                                }
-                            }
-                        });
-                    }
-                    
+                });
+
+                if (statusChanged) {
+                    updateChannelStats();
                     renderVideos();
+                }
+
+                if (completedItems.length !== lastCompletedCount) {
+                    lastCompletedCount = completedItems.length;
+                    if (completedItems.length > 0 && currentChannel) {
+                        syncDownloadStatus().catch(err => console.warn('[QueueSync] Sync error:', err));
+                    }
                 }
             } catch (error) {
                 console.error('[Queue] Refresh error:', error);
@@ -3702,9 +3971,7 @@
             const container = document.getElementById('queueList');
             const card = document.getElementById('queueCard');
             
-            // ✅ DEFENSIVE: Ensure queue is always an array
             if (!Array.isArray(queue)) {
-                console.error('[renderQueue] ERROR: Expected array but received:', typeof queue, queue);
                 queue = [];
             }
             
@@ -3715,24 +3982,27 @@
             
             card.style.display = 'block';
             
-            const activeCount = queue.filter(q => q.isActive).length;
-            const waitingCount = queue.filter(q => q.isWaiting).length;
+            const activeCount = queue.filter(q => q.isActive || q.status === 'downloading').length;
+            const waitingCount = queue.filter(q => q.isWaiting || q.status === 'queued' || q.status === 'waiting').length;
             
             document.getElementById('activeCount').textContent = activeCount;
             document.getElementById('waitingCount').textContent = waitingCount;
             
-            container.innerHTML = queue.map((item, index) => `
-                <div class="queue-item ${item.isActive ? 'downloading' : 'waiting'}" id="queue-${item.id || item.downloadId || index}">
+            container.innerHTML = queue.map((item, index) => {
+                const isWaitingItem = item.isWaiting || item.status === 'queued' || item.status === 'waiting';
+                const isActiveItem = item.isActive || item.status === 'downloading';
+                return `
+                <div class="queue-item ${isActiveItem ? 'downloading' : 'waiting'}" id="queue-${item.id || item.downloadId || index}">
                     <div class="queue-item-info">
                         <span class="queue-position">#${index + 1}</span>
                         <span class="queue-item-title" title="${escapeHtml(item.title || 'Download')}">${escapeHtml(item.title || 'Download')}</span>
                     </div>
                     <div class="queue-item-status">
-                        ${item.isWaiting 
+                        ${isWaitingItem
                             ? `<span class="status-badge queue-waiting">⏳ Waiting</span>`
                             : `<span class="status-badge queue-active">▶️ ${item.progress || 0}%</span>`
                         }
-                        ${item.speed && !item.isWaiting ? `<span style="color:#666">@${item.speed}</span>` : ''}
+                        ${item.speed && !isWaitingItem ? `<span style="color:#666">@${item.speed}</span>` : ''}
                         
                         <!-- 4 Action Buttons: Stop | Cancel | Remove | Force Stop -->
                         <div class="queue-actions">
@@ -3751,7 +4021,7 @@
                             </button>
                             
                             <!-- REMOVE: Remove from queue (Gray) - Only for waiting -->
-                            ${item.isWaiting ? `
+                            ${isWaitingItem ? `
                             <button class="queue-btn queue-btn-remove" 
                                     onclick="event.stopPropagation(); removeQueueItem('${item.id || item.downloadId}', '${escapeHtml(item.title || 'Download')}')"
                                     title="Remove from Queue">
@@ -3760,7 +4030,7 @@
                             ` : ''}
                             
                             <!-- FORCE STOP: Kill process immediately (Dark Red) - Only for active -->
-                            ${!item.isWaiting ? `
+                            ${isActiveItem ? `
                             <button class="queue-btn queue-btn-force" 
                                     onclick="event.stopPropagation(); showCancelConfirm('${item.id || item.downloadId}', '${escapeHtml(item.title || 'Download')}', 'force')"
                                     title="Force Stop (Kill Process)">
@@ -3770,7 +4040,8 @@
                         </div>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
         
         // Clear only waiting downloads (not active ones)
@@ -4008,14 +4279,6 @@
                 
                 if (data.success) {
                     document.getElementById('downloadsDirInput').value = data.data.currentDownloadsDir || '';
-                    document.getElementById('folderInfo').innerHTML = `
-                        Path: ${data.data.resolvedPath || 'N/A'}<br>
-                        Exists: ${data.data.dirExists ? 'Yes' : 'No'}<br>
-                        Files: ${data.data.fileCount || 0}
-                    `;
-                    document.getElementById('folderStatus').innerHTML = `
-                        Current: <strong>${data.data.resolvedPath || 'Not set'}</strong>
-                    `;
                 }
             } catch (error) {
                 console.error('Error loading settings:', error);
@@ -4108,18 +4371,73 @@
                 console.warn('Could not save channels to localStorage:', e);
             }
         }
+
+        async function saveChannelsToDb() {
+            const btn = document.getElementById('saveChannelsBtn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '⏳ Saving...';
+            }
+
+            try {
+                saveChannels(); // Save to localStorage first
+                const response = await fetch(`${API_BASE}/api/channels/save-all`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channels: channels })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    showAlert(`💾 Saved ${channels.length} channels to database`, 'success', 3000);
+                    addLogEntry(`💾 Saved ${channels.length} channels to database`, 'success');
+                } else {
+                    throw new Error(data.error || 'Failed to save channels');
+                }
+            } catch (error) {
+                console.error('[Save Channels] Error:', error);
+                showAlert(`❌ Failed to save channels: ${error.message}`, 'error', 4000);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '💾 Save';
+                }
+            }
+        }
         
-        function loadSavedChannels() {
+        async function loadSavedChannels() {
+            try {
+                const response = await fetch(`${API_BASE}/api/channels`);
+                const data = await response.json();
+                if (data.success && Array.isArray(data.channels) && data.channels.length > 0) {
+                    channels = data.channels.map(ch => ({
+                        id: ch.id,
+                        name: ch.name,
+                        url: ch.url,
+                        handle: extractHandle(ch.url || ch.name),
+                        videoCount: ch.videoCount || (ch.videos ? ch.videos.length : 0),
+                        data: ch,
+                        videos: ch.videos || []
+                    }));
+                    renderChannelList();
+
+                    const savedActive = localStorage.getItem('ytl_active_channel');
+                    const targetId = (savedActive && channels.find(ch => ch.id === savedActive)) ? savedActive : channels[0].id;
+                    selectChannel(targetId);
+                    return;
+                }
+            } catch (e) {
+                console.warn('[loadSavedChannels] Could not fetch channels from server:', e);
+            }
+
             try {
                 const saved = localStorage.getItem('ytl_channels');
                 if (saved) {
                     channels = JSON.parse(saved);
                     renderChannelList();
                     
-                    // Restore active channel
                     const savedActive = localStorage.getItem('ytl_active_channel');
                     if (savedActive && channels.find(ch => ch.id === savedActive)) {
-                        // Don't auto-load, just mark as active in UI
                         activeChannelId = savedActive;
                         const channel = channels.find(ch => ch.id === savedActive);
                         if (channel) {
@@ -4129,7 +4447,7 @@
                     }
                 }
             } catch (e) {
-                console.warn('Could not load saved channels:', e);
+                console.warn('Could not load saved channels from localStorage:', e);
             }
         }
 
