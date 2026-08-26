@@ -24,6 +24,7 @@
     "supertest": "^7.2.2"
   },
   "overrides": {
-    "glob": "^13.0.6"
+    "glob": "^13.0.6",
+    "prebuild-install": "npm:empty-npm-package@1.0.0"
   }
 }
