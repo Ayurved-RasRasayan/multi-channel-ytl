@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  youtube-downloader:
+    build: .
+    container_name: youtube-downloader
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./downloads:/app/downloads
+      - ./server/db_channels.json:/app/server/db_channels.json
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+    restart: unless-stopped
