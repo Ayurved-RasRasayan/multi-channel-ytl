@@ -466,10 +466,48 @@ try {
 }
 
 // =============================================================================
-// IN-MEMORY STORAGE
+// PERSISTENT DATABASE STORAGE & MASTER SYNC TRACKING
 // =============================================================================
 
+const DB_FILE = path.join(__dirname, 'db_channels.json');
 const savedChannels = new Map();
+let initialDiskSyncDone = false;
+
+function loadDatabase() {
+    try {
+        if (fs.existsSync(DB_FILE)) {
+            const data = fs.readFileSync(DB_FILE, 'utf8');
+            const parsed = JSON.parse(data);
+            if (Array.isArray(parsed)) {
+                parsed.forEach(ch => {
+                    if (ch && ch.id) {
+                        const existing = Array.from(savedChannels.values()).find(
+                            existingCh => (ch.youtubeId && existingCh.youtubeId === ch.youtubeId) ||
+                                          (ch.url && existingCh.url === ch.url)
+                        );
+                        if (!existing) {
+                            savedChannels.set(ch.id, ch);
+                        }
+                    }
+                });
+                console.log(`[Database] Loaded ${savedChannels.size} unique channels from DB file.`);
+            }
+        }
+    } catch (e) {
+        console.error('[Database] Failed to load DB file:', e.message);
+    }
+}
+
+function saveDatabase() {
+    try {
+        const channelsArr = Array.from(savedChannels.values());
+        fs.writeFileSync(DB_FILE, JSON.stringify(channelsArr, null, 2), 'utf8');
+    } catch (e) {
+        console.error('[Database] Failed to save DB file:', e.message);
+    }
+}
+
+loadDatabase();
 
 // ⭐ NEW: Server-side log buffer for terminal output viewing
 const serverLogBuffer = [];
@@ -577,25 +615,26 @@ const downloadManager = {
 const SANITIZE_PYTHON_SCRIPT = path.join(__dirname, '..', 'sanitize.py');
 
 /**
- * Fallback JavaScript sanitizer (used when Python is not available)
- * This is a simplified version of sanitize.py logic
+ * Fast JavaScript sanitizer for Windows filenames
+ * Keeps Unicode letters (Chinese, Arabic, Urdu, etc.) and sanitizes special chars.
+ * High-performance native JS replacement for sanitize.py to avoid child process spawn overhead.
  * @param {string} filename - Raw filename to sanitize
  * @returns {string} Sanitized filename (preserves case)
  */
 function fallbackSanitize(filename) {
-    if (!filename || filename.trim() === '') return 'unnamed';
+    if (!filename || !filename.trim()) return 'unnamed';
     
     let sanitized = filename;
     
     // Replace illegal Windows characters with '_'
     sanitized = sanitized.replace(/[\\/*?:"<>|]/g, '_');
     
-    // Replace special characters with '-'
-    // Keep: Unicode letters, numbers, spaces, '.', '_', '-', '(', ')'
-    sanitized = sanitized.replace(/[^\w\s\._\-()]/g, '-');
+    // Replace special characters with '-' using Unicode character property escapes
+    // Keep: ALL Unicode letters (\p{L}), Unicode numbers (\p{N}), spaces (\s), '.', '_', '-', '(', ')'
+    sanitized = sanitized.replace(/[^\p{L}\p{N}\s\._\-()]/gu, '-');
     
     // Strip leading/trailing spaces and dots
-    sanitized = sanitized.trim(' .');
+    sanitized = sanitized.trim().replace(/^[. ]+|[. ]+$/g, '');
     
     // Convert leading '_' or '-' to 'Z'
     if (sanitized && (sanitized[0] === '_' || sanitized[0] === '-')) {
@@ -617,49 +656,13 @@ function fallbackSanitize(filename) {
 }
 
 /**
- * Call sanitize.py via child_process for proper sanitization
- * Falls back to JS-based sanitizer if Python fails
+ * Fast native title sanitizer.
+ * Performs instant in-memory sanitization without launching external Python processes.
  * @param {string} rawTitle - Raw YouTube video title
- * @returns {string} Sanitized filename (preserves case, as per sanitize.py rules)
+ * @returns {string} Sanitized filename (preserves case, Unicode safe)
  */
 function sanitizeViaPython(rawTitle) {
-    try {
-        // Use spawnSync with stdin to safely pass Unicode/Urdu/Arabic text
-        // This avoids Windows command-line encoding issues with non-ASCII characters
-        const { spawnSync } = require('child_process');
-        
-        // Detect Python command based on OS (windows uses 'python' or 'py', not 'python3')
-        const pythonCmd = process.platform === 'win32' ? 
-            (process.env.PYTHON || 'python') : 'python3';
-        
-        const result = spawnSync(
-            pythonCmd,
-            [SANITIZE_PYTHON_SCRIPT, '--json'],
-            {
-                encoding: 'utf-8',
-                timeout: 5000,  // 5 second timeout
-                cwd: path.dirname(SANITIZE_PYTHON_SCRIPT),
-                stdio: ['pipe', 'pipe', 'pipe'],
-                input: rawTitle  // Pass filename via stdin (safe for Unicode!)
-            }
-        );
-        
-        if (result.error) throw result.error;
-        
-        const parsed = JSON.parse(result.stdout.trim());
-        
-        if (parsed.success && parsed.sanitized) {
-            console.log(`[sanitizeViaPython] ✅ "${rawTitle}" → "${parsed.sanitized}"`);
-            return parsed.sanitized;
-        } else {
-            throw new Error(parsed.error || 'Unknown error from sanitize.py');
-        }
-        
-    } catch (error) {
-        console.warn(`[sanitizeViaPython] ⚠️ Python failed for "${rawTitle}":`, error.message);
-        console.warn('[sanitizeViaPython] Using fallback JS sanitizer instead');
-        return fallbackSanitize(rawTitle);
-    }
+    return fallbackSanitize(rawTitle);
 }
 
 /**
@@ -1431,7 +1434,7 @@ app.post('/api/video/info', async (req, res) => {
 // Start download endpoint
 app.post('/api/download/start', async (req, res) => {
     try {
-        const { url, format, quality, title } = req.body;  // ⭐ Added title!
+        const { url, format, quality, title } = req.body;
         
         if (!url) {
             return res.status(400).json({ error: 'Video URL required' });
@@ -1444,40 +1447,20 @@ app.post('/api/download/start', async (req, res) => {
         const download = downloadManager.add({
             id: downloadId,
             url: url,
-            title: title || null,  // ⭐ ADD TITLE FOR RENAME!
+            title: title || null,
             filename: filename,
             outputPath: outputPath,
-            status: 'downloading',
+            status: 'queued',
             progress: 0,
-            startTime: Date.now()
+            createdAt: new Date().toISOString()
         });
 
-        // Start download
-        executeDownload(
-            downloadId,
-            url,
-            outputPath,
-            format || 'best',
-            (progress) => {
-                download.progress = progress.percent;
-                download.downloaded = progress.downloaded;
-                download.total = progress.total;
-            },
-            (result) => {
-                download.status = 'completed';
-                download.endTime = Date.now();
-            },
-            (error) => {
-                download.status = 'error';
-                download.error = error;
-                download.endTime = Date.now();
-            }
-        );
+        downloadQueue.enqueue(downloadId, url, outputPath, title || `video_${downloadId}`);
 
         res.json({
             success: true,
             downloadId: downloadId,
-            message: 'Download started'
+            message: 'Download queued'
         });
 
     } catch (error) {
@@ -1679,6 +1662,46 @@ app.get('/api/channels', (req, res) => {
     });
 });
 
+// GET /api/channels/:id - Return a specific channel by ID
+app.get('/api/channels/:id', (req, res) => {
+    const { id } = req.params;
+    console.log(`\n[Channels] GET /api/channels/${id} requested`);
+
+    if (savedChannels.has(id)) {
+        const channel = savedChannels.get(id);
+        res.json({
+            success: true,
+            channel: channel,
+            videos: channel.videos || []
+        });
+    } else {
+        res.status(404).json({
+            success: false,
+            error: 'Channel not found'
+        });
+    }
+});
+
+// GET /api/channels/:id/videos - Return videos for a specific channel
+app.get('/api/channels/:id/videos', (req, res) => {
+    const { id } = req.params;
+    console.log(`\n[Channels] GET /api/channels/${id}/videos requested`);
+
+    if (savedChannels.has(id)) {
+        const channel = savedChannels.get(id);
+        res.json({
+            success: true,
+            channel: channel,
+            videos: channel.videos || []
+        });
+    } else {
+        res.status(404).json({
+            success: false,
+            error: 'Channel not found'
+        });
+    }
+});
+
 // POST /api/channels - Add a new channel (THIS IS WHAT "LOAD CHANNEL" CALLS!)
 app.post('/api/channels', async (req, res) => {
     console.log('\n' + '='.repeat(80));
@@ -1701,6 +1724,10 @@ app.post('/api/channels', async (req, res) => {
         // ⭐ SMART URL CLEANUP - Fix doubled/malformed URLs
         let channelUrl = url || `https://www.youtube.com/@${channelId}`;
         
+        if (channelUrl.startsWith('@')) {
+            channelUrl = `https://www.youtube.com/${channelUrl}`;
+        }
+
         // Fix common URL issues:
         // 1. Double youtube.com: https://www.youtube.com/www.youtube.com/@user
         // 2. Missing protocol: www.youtube.com/@user
@@ -1716,7 +1743,11 @@ app.post('/api/channels', async (req, res) => {
             
             // Ensure protocol exists
             if (!channelUrl.startsWith('http://') && !channelUrl.startsWith('https://')) {
-                channelUrl = 'https://' + channelUrl.replace(/^\/\//, '');
+                if (channelUrl.startsWith('www.youtube.com') || channelUrl.startsWith('youtube.com')) {
+                    channelUrl = 'https://' + channelUrl;
+                } else {
+                    channelUrl = 'https://www.youtube.com/' + channelUrl;
+                }
                 console.log('[Channels] 🔧 Added missing protocol');
             }
             
@@ -1740,27 +1771,36 @@ app.post('/api/channels', async (req, res) => {
         console.log('[Channels] Videos found:', channelData.videos.length);
         console.log('[Channels] Live videos found:', channelData.liveVideos.length);
         
-        // Create channel object (without sync/badge related fields - MODIFICATION 1)
+        // Create channel object
         const videosClean = channelData.videos.map(video => ({
             ...video
         }));
         
-        // Create channel object
+        // Deduplicate channel in savedChannels
+        let existingChannel = null;
+        for (const ch of savedChannels.values()) {
+            if ((ch.youtubeId && ch.youtubeId === channelIdFinal) || (ch.url && ch.url === channelUrl)) {
+                existingChannel = ch;
+                break;
+            }
+        }
+
         const channel = {
-            id: uuidv4(),
+            id: existingChannel ? existingChannel.id : uuidv4(),
             youtubeId: channelIdFinal,
             url: channelUrl,
             name: name || channelIdFinal,
             videoCount: channelData.videos.length + channelData.liveVideos.length,
             videos: videosClean,
             liveVideos: channelData.liveVideos,
-            addedAt: new Date().toISOString(),
+            addedAt: existingChannel ? existingChannel.addedAt : new Date().toISOString(),
             lastChecked: new Date().toISOString(),
             status: 'active'
         };
         
-        // Save to in-memory storage
+        // Save to storage and persist
         savedChannels.set(channel.id, channel);
+        saveDatabase();
         
         console.log('[Channels] 💾 Channel saved with ID:', channel.id);
         console.log('='.repeat(80) + '\n');
@@ -1808,37 +1848,126 @@ app.post('/api/channels', async (req, res) => {
 let syncInProgress = new Set();  // Track channels currently being synced
 const SYNC_LOCK_TIMEOUT = 30000; // 30 second max lock duration (safety)
 
-// GET /api/channels/:id/sync-status - Check download status of all videos in a channel
-app.get('/api/channels/:id/sync-status', (req, res) => {
+// Helper to perform master disk scan for a given channel
+function performDiskScanForChannel(channel) {
+    const videos = channel.videos || [];
+    const channelDir = getChannelDownloadDir(channel.name);
+    let downloadedFiles = [];
+
+    // Check channel-specific directory
+    if (fs.existsSync(channelDir)) {
+        try {
+            const files = fs.readdirSync(channelDir)
+                .filter(file => file.toLowerCase().endsWith('.mp4'))
+                .map(file => ({
+                    name: file,
+                    path: path.join(channelDir, file),
+                    size: fs.statSync(path.join(channelDir, file)).size,
+                    modifiedAt: fs.statSync(path.join(channelDir, file)).mtime.toISOString()
+                }));
+            downloadedFiles.push(...files);
+        } catch (err) {
+            console.error(`[Disk Scan] Error reading ${channelDir}:`, err.message);
+        }
+    }
+
+    // Also check root DOWNLOADS_DIR if different
+    if (fs.existsSync(DOWNLOADS_DIR) && path.resolve(DOWNLOADS_DIR) !== path.resolve(channelDir)) {
+        try {
+            const files = fs.readdirSync(DOWNLOADS_DIR)
+                .filter(file => file.toLowerCase().endsWith('.mp4'))
+                .map(file => ({
+                    name: file,
+                    path: path.join(DOWNLOADS_DIR, file),
+                    size: fs.statSync(path.join(DOWNLOADS_DIR, file)).size,
+                    modifiedAt: fs.statSync(path.join(DOWNLOADS_DIR, file)).mtime.toISOString()
+                }));
+            downloadedFiles.push(...files);
+        } catch (err) {
+            console.error(`[Disk Scan] Error reading ${DOWNLOADS_DIR}:`, err.message);
+        }
+    }
+
+    const consumedFiles = new Set();
+
+    const syncResults = videos.map((video) => {
+        const vidId = (video.id || video.videoId || '').toLowerCase();
+        const expectedFilename = (video.finalFilename || '').toLowerCase();
+        const downloadFilename = (video.downloadFilename || '').toLowerCase();
+        const sanitizedBase = video.sanitizedBase ? `${video.sanitizedBase.toLowerCase()}.mp4` : '';
+        const titleSanitized = sanitizeViaPython(video.title || '').toLowerCase() + '.mp4';
+
+        // Find a matching file on disk
+        let matchingFile = downloadedFiles.find(f => {
+            if (consumedFiles.has(f.path)) return false;
+            const fname = f.name.toLowerCase();
+
+            if (expectedFilename && fname === expectedFilename) return true;
+            if (downloadFilename && fname === downloadFilename) return true;
+            if (sanitizedBase && fname === sanitizedBase) return true;
+            if (titleSanitized && fname === titleSanitized) return true;
+            if (vidId && fname.includes(vidId)) return true;
+
+            return false;
+        });
+
+        const isDownloaded = !!matchingFile;
+        if (isDownloaded && matchingFile) {
+            consumedFiles.add(matchingFile.path);
+        }
+
+        return {
+            id: video.id || video.videoId,
+            isDownloaded: isDownloaded,
+            fileInfo: matchingFile ? {
+                fileName: matchingFile.name,
+                filePath: matchingFile.path,
+                fileSize: matchingFile.size
+            } : null
+        };
+    });
+
+    const videoStatuses = syncResults.map(v => ({
+        videoId: v.id,
+        exists: v.isDownloaded,
+        filename: v.fileInfo ? v.fileInfo.fileName : null,
+        filePath: v.fileInfo ? v.fileInfo.filePath : null
+    }));
+
+    videos.forEach(v => {
+        const vidId = v.id || v.videoId;
+        const statusMatch = videoStatuses.find(st => st.videoId === vidId);
+        if (statusMatch) {
+            v.syncStatus = statusMatch.exists ? 'downloaded' : 'new';
+            if (statusMatch.filename) {
+                v.finalFilename = statusMatch.filename;
+                v.filePath = statusMatch.filePath;
+            }
+            if (statusMatch.exists) {
+                v.downloadStatus = 'completed';
+            } else {
+                if (v.downloadStatus === 'completed') {
+                    v.downloadStatus = null;
+                }
+            }
+        }
+    });
+
+    return {
+        total: videos.length,
+        downloaded: syncResults.filter(v => v.isDownloaded).length,
+        videoStatuses: videoStatuses,
+        syncResults: syncResults
+    };
+}
+
+// Sync status handler function
+const handleChannelSync = (req, res) => {
     const { id } = req.params;
     console.log('\n[Sync] GET /api/channels/' + id + '/sync-status');
     
     try {
-        // ⭐ FIX: Check if sync is already in progress for this channel
-        if (syncInProgress.has(id)) {
-            console.log(`[Sync] ⚠️ SYNC IN PROGRESS: Channel ${id} is already being synced, skipping duplicate request`);
-            return res.status(429).json({
-                success: false,
-                error: 'Sync in progress',
-                message: 'A sync operation is already running for this channel. Please wait for it to complete.'
-            });
-        }
-        
-        // Lock this channel for syncing
-        syncInProgress.add(id);
-        console.log(`[Sync] 🔒 Sync lock acquired for channel ${id}`);
-        
-        // Auto-release lock after timeout (safety measure)
-        setTimeout(() => {
-            if (syncInProgress.has(id)) {
-                console.log(`[Sync] 🔓 Auto-releasing sync lock for channel ${id} (timeout)`);
-                syncInProgress.delete(id);
-            }
-        }, SYNC_LOCK_TIMEOUT);
-        
-        // Find the channel
         if (!savedChannels.has(id)) {
-            syncInProgress.delete(id);  // Release lock on error
             return res.status(404).json({
                 success: false,
                 error: 'Channel not found'
@@ -1846,196 +1975,164 @@ app.get('/api/channels/:id/sync-status', (req, res) => {
         }
         
         const channel = savedChannels.get(id);
+
+        console.log('[Sync] Performing disk scan for channel:', channel.name);
+        const scanRes = performDiskScanForChannel(channel);
+        initialDiskSyncDone = true;
+        saveDatabase();
+
         const videos = channel.videos || [];
-        
-        // Get the channel's download directory
-        const channelDir = getChannelDownloadDir(channel.name);
-        console.log('[Sync] Scanning directory:', channelDir);
-        
-        // Check if directory exists
-        let downloadedFiles = [];
-        if (fs.existsSync(channelDir)) {
-            // Read all .mp4 files from the channel directory
-            try {
-                downloadedFiles = fs.readdirSync(channelDir)
-                    .filter(file => file.toLowerCase().endsWith('.mp4'))
-                    .map(file => ({
-                        name: file,
-                        path: path.join(channelDir, file),
-                        size: fs.statSync(path.join(channelDir, file)).size,
-                        modifiedAt: fs.statSync(path.join(channelDir, file)).mtime.toISOString()
-                    }));
-                console.log('[Sync] Found', downloadedFiles.length, '.mp4 files');
-            } catch (err) {
-                console.error('[Sync] Error reading directory:', err.message);
-            }
-        } else {
-            console.log('[Sync] Channel directory does not exist:', channelDir);
-        }
-        
-        // REVERSE MATCHING ALGORITHM (with deduplication):
-        // 1. Start from ACTUAL files on disk
-        // 2. Match videos to files
-        // 3. Track which files have been "consumed" to prevent double-counting
-        // This guarantees downloaded count <= actual file count
-        
-        // Create a Set of actual filenames (with .mp4 extension) for O(1) lookup
-        // Use lowercase for case-insensitive comparison
-        const actualFileSet = new Set(
-            downloadedFiles.map(f => f.name.toLowerCase())
-        );
-        
-        // Track which files have already been matched/consumed
-        // This prevents multiple video entries from matching the same physical file
-        const consumedFiles = new Set();
-        
-        console.log('[Sync] 📁 Actual files on disk:', Array.from(actualFileSet));
-        console.log('[Sync] 📺 Total videos to check:', videos.length);
-        
-        // Match each video with its download status
-        const syncResults = videos.map((video, index) => {
-            // ⭐⭐⭐ NEW UNIFIED MATCHING (using resolveDuplicatesWithDuration output) ⭐⭐⭐
-            // 
-            // All videos now have 'finalFilename' from the new pipeline:
-            //   - Unique videos: "Sanitized-Title.mp4"
-            //   - Duplicate videos: "Sanitized-Title-(HHh-MMm-SSs).mp4" or "--videoId.mp4"
-            //
-            // Simply use video.finalFilename for matching - no branching needed!
-            
-            const videoTitle = video.displayTitle || video.title || '';  // For display/logging
-            
-            // Use pre-computed finalFilename from resolveDuplicatesWithDuration()
-            const expectedFilename = (video.finalFilename || '').toLowerCase();
-            const matchingStrategy = video.isDuplicate ? 'DUPLICATE (finalFilename)' : 'UNIQUE (finalFilename)';
-            
-            // Check if this exact filename:
-            // 1. Exists in the actual files AND
-            // 2. Has NOT been consumed by a previous match
-            const fileExists = actualFileSet.has(expectedFilename);
-            const isDownloaded = fileExists && !consumedFiles.has(expectedFilename);
-            
-            // Debug logging for first few videos and all matches
-            if (index < 5 || (fileExists && index < 20)) {
-                console.log(`[Sync] Video ${index}: "${videoTitle}"`);
-                console.log(`[Sync]   → Strategy: ${matchingStrategy}`);
-                console.log(`[Sync]   → Raw (YouTube):    "${video.title}"`);
-                console.log(`[Sync]   → Sanitized base:  "${video.sanitizedBase}"`);
-                console.log(`[Sync]   → Expected match:   "${expectedFilename}"`);
-                if (video.isDuplicate) {
-                    console.log(`[Sync]   ⚠️ Duplicate - suffix: "${video.durationSuffix}"`);
-                }
-                console.log(`[Sync]   → File exists: ${fileExists ? '✅ YES' : '❌ NO'}`);
-                if (fileExists) {
-                    console.log(`[Sync]   → Already consumed: ${consumedFiles.has(expectedFilename) ? '⚠️ YES' : '❌ NO'}`);
-                }
-            }
-            
-            // Find the actual file info if downloaded and mark as consumed
-            let fileInfo = null;
-            if (isDownloaded) {
-                consumedFiles.add(expectedFilename); // Mark this file as consumed!
-                
-                // Find the original file (case-sensitive) for file info
-                const matchingFile = downloadedFiles.find(f => 
-                    f.name.toLowerCase() === expectedFilename
-                );
-                if (matchingFile) {
-                    fileInfo = {
-                        fileName: matchingFile.name,
-                        filePath: matchingFile.path,
-                        fileSize: matchingFile.size,
-                        fileSizeMB: (matchingFile.size / (1024 * 1024)).toFixed(2),
-                        downloadedAt: matchingFile.modifiedAt
-                    };
-                    console.log(`[Sync]   ✅ MATCHED & CONSUMED: ${matchingFile.name} (${fileInfo.fileSizeMB} MB)`);
-                }
-            } else if (fileExists) {
-                // File exists but was already consumed by another video
-                console.log(`[Sync]   ⚠️ SKIPPED (file already matched to another video)`);
-            }
-            
-            return {
-                id: video.id || video.videoId,
-                title: videoTitle,
-                displayTitle: video.displayTitle || video.title,           // Raw YouTube title (for UI)
-                sanitizedTitle: video.sanitizedTitle || '',               // Sanitized base (no illegal chars)
-                isDownloaded: isDownloaded,
-                expectedFilename: expectedFilename,                       // What we looked for (Option 2a result)
-                originalExpectedFilename: videoTitle + '.mp4',            // Raw version (for comparison)
-                matchingStrategy: matchingStrategy,                       // Which path was taken
-                fileInfo: fileInfo
-            };
-        });
-        
-        // Calculate statistics
-        const totalVideos = syncResults.length;
-        const downloadedCount = syncResults.filter(v => v.isDownloaded).length;
+        const totalVideos = videos.length;
+        const downloadedCount = scanRes.downloaded;
         const remainingCount = totalVideos - downloadedCount;
-        
-        const response = {
+
+        res.json({
             success: true,
             channelId: id,
             channelName: channel.name,
-            channelDir: channelDir,
             statistics: {
                 total: totalVideos,
                 downloaded: downloadedCount,
                 remaining: remainingCount,
                 percentage: totalVideos > 0 ? ((downloadedCount / totalVideos) * 100).toFixed(1) : 0
             },
-            videos: syncResults,
+            videos: videos,
+            videoStatuses: scanRes.videoStatuses,
             scannedAt: new Date().toISOString()
-        };
-        
-        console.log('\n[Sync] ✅ SYNC COMPLETE (Option 2a - Smart Hybrid Matching):');
-        console.log('   ════════════════════════════════════════════════════════');
-        console.log('   📊 Total videos in channel:', totalVideos);
-        console.log('   📁 Physical .mp4 files on disk:', downloadedFiles.length);
-        console.log('   ✅ Files matched/consumed (Downloaded):', consumedFiles.size);
-        console.log('   🔴 Videos without files (Remaining):', remainingCount);
-        console.log('   📈 Download percentage:', ((downloadedCount / totalVideos) * 100).toFixed(1) + '%');
-        
-        // ⭐ BUG FIX #10: Show Option 2a strategy breakdown
-        const uniqueCount = syncResults.filter(v => v.matchingStrategy === 'UNIQUE (sanitizedTitle)').length;
-        const duplicateCount = syncResults.filter(v => v.matchingStrategy === 'DUPLICATE (downloadFilename)').length;
-        console.log('\n   🎯 Option 2a Strategy Breakdown:');
-        console.log('      ──────────────────────────────────────');
-        console.log(`      📝 Unique titles (sanitizedTitle):     ${uniqueCount}`);
-        console.log(`      🔁 Duplicate titles (downloadFilename): ${duplicateCount}`);
-        console.log('      ──────────────────────────────────────');
-        
-        // Validation check
-        if (downloadedCount > downloadedFiles.length) {
-            console.log('   ⚠️  WARNING: Downloaded count exceeds file count! Bug detected!');
-        } else if (downloadedCount === downloadedFiles.length) {
-            console.log('   ✅ VALIDATION PASSED: Downloaded count matches file count!');
-        }
-        
-        if (downloadedFiles.length > 0) {
-            console.log('\n   📁 Files found on disk:');
-            downloadedFiles.forEach((f, i) => {
-                const isConsumed = consumedFiles.has(f.name.toLowerCase());
-                console.log(`      ${i+1}. ${f.name} ${isConsumed ? '✅ MATCHED' : '❌ UNMATCHED'} (${(f.size/(1024*1024)).toFixed(2)} MB)`);
-            });
-        }
-        console.log('   ════════════════════════════════════════════════════════\n');
-        
-        // ⭐ FIX: Release sync lock before sending response
-        syncInProgress.delete(id);
-        console.log(`[Sync] 🔓 Sync lock released for channel ${id}`);
-        
-        res.json(response);
+        });
         
     } catch (error) {
         console.error('[Sync] ❌ Error:', error.message);
-        // ⭐ FIX: Release sync lock on error too
-        syncInProgress.delete(id);
-        console.log(`[Sync] 🔓 Sync lock released for channel ${id} (error)`);
         res.status(500).json({
             success: false,
             error: 'Failed to check sync status: ' + error.message
         });
     }
+};
+
+// Endpoint to save/persist all channels into database
+app.post('/api/channels/save-all', (req, res) => {
+    console.log('\n[Save Channels] POST /api/channels/save-all requested');
+    try {
+        const clientChannels = req.body && Array.isArray(req.body.channels) ? req.body.channels : [];
+        let savedCount = 0;
+
+        clientChannels.forEach(ch => {
+            if (ch && ch.id) {
+                savedChannels.set(ch.id, ch);
+                savedCount++;
+            }
+        });
+
+        saveDatabase();
+        console.log(`[Save Channels] ✅ Persisted ${savedCount} channels to db_channels.json`);
+
+        res.json({
+            success: true,
+            savedCount: savedCount,
+            totalChannels: savedChannels.size,
+            message: `Successfully saved ${savedCount} channels to database`
+        });
+    } catch (error) {
+        console.error('[Save Channels] Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to save channels: ' + error.message
+        });
+    }
+});
+
+// Endpoint to sync all channels at once
+app.post('/api/channels/sync-all', (req, res) => {
+    console.log('\n[Sync All] POST /api/channels/sync-all requested');
+    try {
+        const clientChannels = req.body && Array.isArray(req.body.channels) ? req.body.channels : [];
+        clientChannels.forEach(c => {
+            if (c && c.id && !savedChannels.has(c.id)) {
+                savedChannels.set(c.id, c);
+            }
+        });
+
+        console.log('[Sync All] Performing disk scan for all channels as MASTER point.');
+
+        const channelSyncResults = {};
+        for (const [id, channel] of savedChannels.entries()) {
+            const scanRes = performDiskScanForChannel(channel);
+            savedChannels.set(id, channel);
+
+            channelSyncResults[id] = {
+                channelId: id,
+                channelName: channel.name,
+                statistics: {
+                    total: scanRes.total,
+                    downloaded: scanRes.downloaded,
+                    remaining: scanRes.total - scanRes.downloaded
+                },
+                videoStatuses: scanRes.videoStatuses
+            };
+        }
+
+        initialDiskSyncDone = true;
+        saveDatabase();
+
+        res.json({
+            success: true,
+            results: channelSyncResults,
+            syncedAt: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('[Sync All] Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to sync all channels: ' + error.message
+        });
+    }
+});
+
+// Endpoints for sync status
+app.get('/api/channels/:id/sync-status', handleChannelSync);
+app.get('/api/channels/:id/sync', handleChannelSync);
+app.post('/api/channels/:id/sync', handleChannelSync);
+
+// POST /api/channels/:id/stop - Stop/cancel all active and queued downloads for a channel
+app.post('/api/channels/:id/stop', (req, res) => {
+    const { id } = req.params;
+    console.log(`\n[Channel Action] ⏸️ STOP requested for channel downloads: ${id}`);
+
+    let stoppedCount = 0;
+
+    // 1. Remove from waiting queue and pending buffer if matching channelId
+    const initialQueueLength = downloadQueue.queue.length + downloadQueue.pendingBuffer.length;
+    const filterFunc = job => {
+        const downloadObj = downloadManager.get(job.downloadId);
+        const matches = downloadObj && downloadObj.channelId === id;
+        if (matches) {
+            downloadManager.update(job.downloadId, { status: 'cancelled', cancelledAt: new Date().toISOString() });
+            stoppedCount++;
+        }
+        return !matches;
+    };
+    downloadQueue.queue = downloadQueue.queue.filter(filterFunc);
+    downloadQueue.pendingBuffer = downloadQueue.pendingBuffer.filter(filterFunc);
+    downloadQueue.replenishQueue();
+
+    // 2. Cancel active downloads for matching channelId in downloadManager
+    const allDownloads = downloadManager.getAll();
+    allDownloads.forEach(d => {
+        if (d.channelId === id && (d.status === 'downloading' || d.status === 'queued')) {
+            downloadManager.update(d.id, { status: 'cancelled', cancelledAt: new Date().toISOString() });
+            stoppedCount++;
+        }
+    });
+
+    console.log(`[Channel Action] ✅ Stopped ${stoppedCount} downloads for channel ${id}`);
+
+    res.json({
+        success: true,
+        channelId: id,
+        stoppedCount: stoppedCount,
+        message: `Stopped ${stoppedCount} downloads for channel`
+    });
 });
 
 // DELETE /api/channels/:id - Remove a saved channel
@@ -2045,6 +2142,7 @@ app.delete('/api/channels/:id', (req, res) => {
     
     if (savedChannels.has(id)) {
         savedChannels.delete(id);
+        saveDatabase();
         console.log('[Channels] ✅ Channel deleted:', id);
         res.json({
             success: true,
@@ -2064,25 +2162,48 @@ app.delete('/api/channels/:id', (req, res) => {
 // =============================================================================
 
 app.get('/api/download-queue', (req, res) => {
-    const active = downloadManager.getActive().map(d => ({
-        id: d.id,
-        videoId: d.videoId,
-        title: d.title,
-        filename: d.filename,
-        status: d.status,
-        progress: d.progress || 0,
-        speed: d.speed || null,
-        downloaded: d.downloaded || null,
-        total: d.total || null,
-        startTime: d.startTime,
-        url: d.url,
-        format: d.format,
-        quality: d.quality,
-        finalFilename: d.finalFilename || null,
-        renamedFrom: d.renamedFrom || null,
-        error: d.error || null
-    }));
+    const queueStatus = downloadQueue.getStatus();
     
+    // Map active jobs from downloadQueue tracking
+    const active = queueStatus.activeDownloads.map(d => {
+        const fullDl = downloadManager.get(d.id) || {};
+        return {
+            id: d.id,
+            videoId: fullDl.videoId,
+            title: d.title || fullDl.title,
+            filename: fullDl.filename,
+            status: 'downloading',
+            progress: fullDl.progress || 0,
+            speed: fullDl.speed || null,
+            downloaded: fullDl.downloaded || null,
+            total: fullDl.total || null,
+            startTime: fullDl.startTime,
+            url: fullDl.url,
+            format: fullDl.format,
+            quality: fullDl.quality,
+            finalFilename: fullDl.finalFilename || null,
+            renamedFrom: fullDl.renamedFrom || null,
+            error: fullDl.error || null
+        };
+    });
+
+    // Map waiting queued jobs from downloadQueue tracking
+    const queued = downloadQueue.queue.map(job => {
+        const fullDl = downloadManager.get(job.downloadId) || {};
+        return {
+            id: job.downloadId,
+            videoId: fullDl.videoId,
+            title: job.videoTitle || fullDl.title,
+            filename: fullDl.filename,
+            status: 'queued',
+            progress: 0,
+            url: fullDl.url
+        };
+    });
+
+    // Combine active and queued for frontend queue list
+    const activeAndQueued = [...active, ...queued];
+
     const completed = downloadManager.getCompleted().map(d => ({
         id: d.id,
         videoId: d.videoId,
@@ -2100,7 +2221,7 @@ app.get('/api/download-queue', (req, res) => {
     res.json({
         success: true,
         queue: {
-            active: active,
+            active: activeAndQueued,
             completed: completed
         },
         timestamp: new Date().toISOString()
@@ -2119,24 +2240,51 @@ app.delete('/api/download-queue', (req, res) => {
 });
 
 // =============================================================================
-// ⭐ DOWNLOAD QUEUE MANAGER - Max 2 Concurrent Downloads
+// ⭐ DOWNLOAD QUEUE MANAGER - Max 2 Concurrent Downloads & 50 Queue Buffering
 // =============================================================================
 
 /**
  * Global download queue system
  * - maxConcurrent: Maximum downloads running at once (2)
+ * - maxVisibleQueue: Maximum items visible in active queue (50)
+ * - replenishThreshold: When active visible queue <= 10 items, replenish to 50 from pendingBuffer
  * - activeJobs: Array of CURRENTLY RUNNING job objects (max 2)
- * - queue: Array of pending download jobs waiting for a slot
+ * - queue: Array of visible download jobs waiting for a slot (max 50)
+ * - pendingBuffer: Array of buffered jobs saved in database/server pool
  */
 const downloadQueue = {
-    maxConcurrent: 2,                    // ⭐ MAX 2 downloads at a time!
-    activeJobs: [],                      // ⭐ NEW: Track ACTUALLY running jobs
-    queue: [],                           // Waiting jobs
+    maxConcurrent: 2,                    // ⭐ MAX 2 downloads at a time
+    maxVisibleQueue: 50,                  // ⭐ MAX 50 visible queued items
+    replenishThreshold: 10,               // ⭐ Replenish when visible queue <= 10
+    activeJobs: [],                      // Track ACTUALLY running jobs
+    queue: [],                           // Visible waiting jobs (max 50)
+    pendingBuffer: [],                   // Buffered pending jobs saved in server state
     
+    /**
+     * Replenish visible queue from pendingBuffer when total visible items drop to <= 10
+     */
+    replenishQueue() {
+        if (this.pendingBuffer.length === 0) return;
+
+        const currentVisible = this.activeJobs.length + this.queue.length;
+        if (currentVisible <= this.replenishThreshold) {
+            const needed = this.maxVisibleQueue - currentVisible;
+            if (needed <= 0) return;
+
+            const toMove = this.pendingBuffer.splice(0, needed);
+            console.log(`[Download Queue] 🔄 Queue reached ${currentVisible} (<= ${this.replenishThreshold}). Replenishing ${toMove.length} videos from database/pending pool to active queue (remaining buffered: ${this.pendingBuffer.length}).`);
+
+            toMove.forEach(job => {
+                this.queue.push(job);
+                downloadManager.update(job.downloadId, { status: 'queued' });
+            });
+        }
+    },
+
     /**
      * Add a download job to the queue
      * If < 2 active, start immediately
-     * Otherwise, wait in queue
+     * Otherwise, wait in queue (or pendingBuffer if queue >= 50)
      */
     enqueue(downloadId, videoUrl, outputPath, videoTitle) {
         const job = { 
@@ -2144,51 +2292,45 @@ const downloadQueue = {
             videoUrl, 
             outputPath, 
             videoTitle,
-            startedAt: null  // Track when job actually starts
+            startedAt: null
         };
         
         console.log(`\n[Download Queue] 📥 Job added: ${videoTitle?.substring(0, 30)}...`);
-        console.log(`[Download Queue] Active: ${this.activeJobs.length}/${this.maxConcurrent} | Queue: ${this.queue.length}`);
         
         if (this.activeJobs.length < this.maxConcurrent) {
-            // Slot available - start immediately!
             console.log(`[Download Queue] ▶️ Starting immediately (slot ${this.activeJobs.length + 1}/${this.maxConcurrent})`);
             this.executeJob(job);
-        } else {
-            // No slot - add to queue AND set status to 'queued'
+        } else if (this.activeJobs.length + this.queue.length < this.maxVisibleQueue) {
             this.queue.push(job);
-            console.log(`[Download Queue] ⏳ Queued at position #${this.queue.length} (waiting for slot)`);
-            
-            // ⭐ KEY FIX: Mark as 'queued' in downloadManager (not 'downloading'!)
+            console.log(`[Download Queue] ⏳ Queued at visible position #${this.queue.length} (waiting for slot)`);
+            downloadManager.update(downloadId, { status: 'queued' });
+        } else {
+            this.pendingBuffer.push(job);
+            console.log(`[Download Queue] 💾 Buffered in database/pending pool (total buffered: ${this.pendingBuffer.length})`);
             downloadManager.update(downloadId, { status: 'queued' });
         }
     },
     
     /**
      * Execute a single download job
-     * ⭐ FIX: Add to activeJobs when starting, remove on complete
      */
     executeJob(job) {
         const { downloadId, videoUrl, outputPath, videoTitle } = job;
         
-        // ⭐ BULLETPROOF: Check if job already executing (prevent 30x execution bug!)
         const alreadyActive = this.activeJobs.find(j => j.downloadId === downloadId);
         if (alreadyActive) {
             console.log(`[Download Queue] ⚠️ DUPLICATE EXECUTION BLOCKED: ${videoTitle?.substring(0, 30)}... (already active)`);
-            return; // Don't execute twice!
+            return;
         }
         
-        // ⭐ KEY FIX: Add to activeJobs tracking
         job.startedAt = Date.now();
         this.activeJobs.push(job);
         
-        // Update status to downloading
         downloadManager.update(downloadId, { status: 'downloading', startTime: Date.now() });
         
         console.log(`[Download Queue] ▶️ Job STARTED: ${videoTitle?.substring(0, 30)}...`);
-        console.log(`[Download Queue] Active jobs: ${this.activeJobs.length} | Waiting: ${this.queue.length}`);
+        console.log(`[Download Queue] Active jobs: ${this.activeJobs.length} | Visible queue: ${this.queue.length} | Buffered: ${this.pendingBuffer.length}`);
         
-        // Start the actual download
         executeSmartDownload(downloadId, videoUrl, outputPath, videoTitle)
             .then(() => {
                 console.log(`[Download Queue] ✅ Job completed: ${videoTitle?.substring(0, 30)}...`);
@@ -2196,7 +2338,6 @@ const downloadQueue = {
             .catch((err) => {
                 console.error(`[Download Queue] ❌ Job failed: ${videoTitle?.substring(0, 30)}... -`, err?.message);
                 
-                // ⭐ CLEANUP: Remove temp/partial files on failure to prevent "(2)" conflicts
                 try {
                     const outputDir = path.dirname(outputPath);
                     const tempFile = path.join(outputDir, `ytl_${downloadId}.mp4`);
@@ -2213,7 +2354,6 @@ const downloadQueue = {
                 }
             })
             .finally(() => {
-                // ⭐ KEY FIX: Remove from activeJobs and process next
                 this.onJobComplete(job);
             });
     },
@@ -2221,77 +2361,57 @@ const downloadQueue = {
     /**
      * Called when a download finishes (success or fail)
      * Frees a slot and starts next queued job if any
-     * ⭐ FIX: Takes the completed job as parameter to remove it properly
      */
     onJobComplete(completedJob) {
-        // ⭐ KEY FIX: Remove specific job from activeJobs
         if (completedJob) {
             const idx = this.activeJobs.findIndex(j => j.downloadId === completedJob.downloadId);
             if (idx !== -1) {
                 this.activeJobs.splice(idx, 1);
                 console.log(`[Download Queue] 🔓 Removed from active: ${completedJob.videoTitle?.substring(0, 30)}...`);
             } else {
-                // ⭐ BULLETPROOF: Job not found in active - might have been removed already
-                console.log(`[Download Queue] ⚠️ Job already removed from active (preventing double-complete): ${completedJob.videoTitle?.substring(0, 30)}...`);
-                return; // Don't process completion twice!
+                console.log(`[Download Queue] ⚠️ Job already removed from active: ${completedJob.videoTitle?.substring(0, 30)}...`);
+                return;
             }
         }
         
-        console.log(`\n[Download Queue] 📊 Status: Active=${this.activeJobs.length}/${this.maxConcurrent} | Queue=${this.queue.length}`);
+        this.replenishQueue();
+
+        console.log(`\n[Download Queue] 📊 Status: Active=${this.activeJobs.length}/${this.maxConcurrent} | Visible Queue=${this.queue.length} | Buffered=${this.pendingBuffer.length}`);
         
         if (this.queue.length > 0 && this.activeJobs.length < this.maxConcurrent) {
-            // Get next job from queue
             const nextJob = this.queue.shift();
             
-            // ⭐ BULLETPROOF: Validate nextJob exists and hasn't been executed
             if (!nextJob) {
                 console.log('[Download Queue] ⚠️ Next job is null, skipping');
                 return;
             }
             
-            // Check if next job is already active (prevent re-execution)
             const alreadyRunning = this.activeJobs.find(j => j.downloadId === nextJob.downloadId);
             if (alreadyRunning) {
                 console.log(`[Download Queue] ⚠️ Next job already running, skipping: ${nextJob.videoTitle?.substring(0, 30)}...`);
                 return;
             }
             
-            console.log(`[Download Queue] ▶️ Starting next in queue: ${nextJob.videoTitle?.substring(0, 30)}...`);
-            console.log(`[Download Queue] Remaining in queue: ${this.queue.length}`);
+            this.activeJobs.push(nextJob);
+
+            console.log(`[Download Queue] ▶️ Reserved slot and starting next in queue: ${nextJob.videoTitle?.substring(0, 30)}...`);
+            console.log(`[Download Queue] Remaining in queue: ${this.queue.length} (buffered: ${this.pendingBuffer.length})`);
             
-            // ⭐ 5-SECOND DELAY BETWEEN DOWNLOADS (as requested)
-            const delaySeconds = 5;
-            console.log(`\n[Download Queue] ⏳ Waiting ${delaySeconds} seconds before starting next download...`);
-            console.log(`[Download Queue] ${'─'.repeat(50)}`);
+            const resIdx = this.activeJobs.findIndex(j => j.downloadId === nextJob.downloadId);
+            if (resIdx !== -1) {
+                this.activeJobs.splice(resIdx, 1);
+            }
+            this.executeJob(nextJob);
             
-            let countdown = delaySeconds;
-            const countdownInterval = setInterval(() => {
-                countdown--;
-                if (countdown > 0) {
-                    console.log(`[Download Queue] ⏱️  ...${countdown} seconds remaining...`);
-                } else {
-                    console.log(`[Download Queue] ✅ Delay complete! Starting: ${nextJob.videoTitle?.substring(0, 40)}...`);
-                    console.log(`[Download Queue] ${'─'.repeat(50)}\n`);
-                    clearInterval(countdownInterval);
-                }
-            }, 1000);
-            
-            setTimeout(() => {
-                clearInterval(countdownInterval); // Ensure cleanup
-                this.executeJob(nextJob);
-            }, delaySeconds * 1000);
-            
-        } else if (this.queue.length === 0 && this.activeJobs.length === 0) {
+        } else if (this.queue.length === 0 && this.pendingBuffer.length === 0 && this.activeJobs.length === 0) {
             console.log('[Download Queue] 🎉 All downloads complete! Queue empty.');
         }
     },
     
     /**
      * Get queue status for API responses
-     * ⭐ FIX: Return proper active jobs from our tracking, not from downloadManager
      */
     getStatus() {
-        // Get progress info for active jobs from downloadManager
         const activeDownloadDetails = this.activeJobs.map(job => {
             const dlInfo = downloadManager.get(job.downloadId);
             return {
@@ -2308,7 +2428,9 @@ const downloadQueue = {
             maxConcurrent: this.maxConcurrent,
             active: this.activeJobs.length,
             queued: this.queue.length,
-            activeDownloads: activeDownloadDetails,  // ⭐ Only TRULY active downloads
+            pendingBuffer: this.pendingBuffer.length,
+            totalQueued: this.queue.length + this.pendingBuffer.length,
+            activeDownloads: activeDownloadDetails,
             queue: this.queue.map(job => ({
                 id: job.downloadId,
                 title: job.videoTitle,
@@ -2320,33 +2442,39 @@ const downloadQueue = {
     
     /**
      * Clear queue (for cancel operations)
-     * Does NOT affect currently running downloads
      */
     clearQueue() {
-        const cleared = this.queue.length;
+        const clearedVisible = this.queue.length;
+        const clearedPending = this.pendingBuffer.length;
         
-        // Mark cleared jobs as cancelled in downloadManager
         this.queue.forEach(job => {
+            downloadManager.update(job.downloadId, { status: 'cancelled' });
+        });
+        this.pendingBuffer.forEach(job => {
             downloadManager.update(job.downloadId, { status: 'cancelled' });
         });
         
         this.queue = [];
-        console.log(`[Download Queue] 🗑️ Queue cleared (${cleared} jobs removed)`);
-        return cleared;
+        this.pendingBuffer = [];
+        console.log(`[Download Queue] 🗑️ Queue cleared (${clearedVisible + clearedPending} jobs removed)`);
+        return clearedVisible + clearedPending;
     },
     
     /**
-     * ⭐ BUG FIX #6: Remove a specific job from queue by download ID
-     * @param {string} downloadId - The download ID to remove from queue
-     * @returns {boolean} True if removed, false if not found
+     * Remove a specific job from queue or pendingBuffer by download ID
      */
     removeFromQueue(downloadId) {
-        const initialLength = this.queue.length;
+        const initQ = this.queue.length;
+        const initP = this.pendingBuffer.length;
+
         this.queue = this.queue.filter(job => job.downloadId !== downloadId);
-        const removed = initialLength !== this.queue.length;
+        this.pendingBuffer = this.pendingBuffer.filter(job => job.downloadId !== downloadId);
+
+        const removed = (initQ !== this.queue.length) || (initP !== this.pendingBuffer.length);
         
         if (removed) {
-            console.log(`[Download Queue] 🗑️ Removed job ${downloadId} from queue`);
+            console.log(`[Download Queue] 🗑️ Removed job ${downloadId} from queue/buffer`);
+            this.replenishQueue();
         }
         
         return removed;
@@ -2356,7 +2484,7 @@ const downloadQueue = {
      * SAFETY: Process next job if stuck (backup mechanism)
      */
     processStuckQueue() {
-        // Check if we have capacity and queued jobs
+        this.replenishQueue();
         if (this.activeJobs.length < this.maxConcurrent && this.queue.length > 0) {
             console.log('[Download Queue] 🔄 Safety check: Found stuck jobs, processing...');
             while (this.activeJobs.length < this.maxConcurrent && this.queue.length > 0) {
@@ -3111,6 +3239,8 @@ app.post('/api/download/batch', async (req, res) => {
                 createdAt: new Date().toISOString()
             });
 
+            downloadQueue.enqueue(downloadId, videoUrl, outputPath, videoTitle);
+
             queuedCount++;
             results.push({
                 index: i,
@@ -3122,31 +3252,21 @@ app.post('/api/download/batch', async (req, res) => {
             });
         }
 
-        // ⭐ NOTE: Downloads will be processed sequentially by processBatchSequentially()
-
         console.log(`\n[Batch Download] ✅ Batch processing complete:`);
         console.log(`   Queued: ${queuedCount}`);
-        console.log(`   Skipped (already exist): ${skippedCount}`);
-        console.log(`   Errors: ${errorCount}`);
-        console.log(`   ⭐ Mode: Sequential (download → rename → 5s delay → next)`);
 
         res.json({
             success: true,
-            message: `Batch download initiated: ${queuedCount} videos will download sequentially (5s between each)`,
+            message: `Batch download initiated: ${queuedCount} videos added to queue (max 2 concurrent)`,
             summary: {
                 total: videos.length,
                 queued: queuedCount,
                 skipped: skippedCount,
-                errors: errorCount,
-                mode: 'sequential'  // ⭐ NEW: Indicate sequential mode
+                errors: errorCount
             },
             results: results,
             batchId: uuidv4()
         });
-
-        // ⭐ FIX: Process downloads SEQUENTIALLY (not parallel with setTimeout)
-        // Video 1: Download → Rename complete → Wait 5s → Video 2: Download → ...
-        processBatchSequentially(videos, results, outputDir, format, quality, channelId);
 
     } catch (error) {
         console.error('[Batch Download] ❌ Error:', error.message);
@@ -3400,7 +3520,7 @@ async function processSequentialQueue(outputDir, format, quality, channelId) {
                 outputPath: outputPath,
                 format: format || 'best',
                 quality: quality || 'lowest',
-                status: 'downloading',  // Set to downloading immediately (it's the only active one)
+                status: 'queued',
                 progress: 0,
                 createdAt: new Date().toISOString()
             });
@@ -3408,8 +3528,19 @@ async function processSequentialQueue(outputDir, format, quality, channelId) {
             console.log(`[Sequential Queue] Job created: ${downloadId}`);
             console.log(`[Sequential Queue] Output: ${outputPath}`);
 
-            // ⭐ KEY: AWAIT this download to complete before continuing
-            await executeSmartDownload(downloadId, video.url, outputPath, video.title);
+            // Enqueue via global queue system to guarantee 2-slot limit
+            downloadQueue.enqueue(downloadId, video.url, outputPath, video.title);
+
+            // Wait until job is completed or errored out in downloadManager
+            await new Promise((resolve) => {
+                const checkInterval = setInterval(() => {
+                    const currentDl = downloadManager.get(downloadId);
+                    if (!currentDl || currentDl.status === 'completed' || currentDl.status === 'error' || currentDl.status === 'cancelled') {
+                        clearInterval(checkInterval);
+                        resolve();
+                    }
+                }, 500);
+            });
 
             // Mark as completed in results
             sequentialQueue.results.push({

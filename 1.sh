@@ -912,7 +912,7 @@ def extract_edge_cookies():
             cursor.execute("""
                 SELECT host_key, path, is_secure, expires_utc, name, value 
                 FROM cookies 
-                WHERE host_key LIKE '%youtube.com%'
+                WHERE host_key LIKE '%youtube.com%' OR host_key LIKE '%google.com%'
             """)
             
             count = 0
@@ -1056,16 +1056,16 @@ manual_cookies_export() {
 export_cookies_with_fallbacks() {
     local BROWSER="$1"
     
-    step "COOKIE EXTRACTION (WITH EXISTING FILE DETECTION)"
+    step "COOKIE EXTRACTION"
 
-    # FIRST: Check if cookies.txt already exists
-    if check_existing_cookies; then
+    # FIRST: Force kill Edge and use Python script to extract fresh cookies
+    if kill_edge_and_extract_cookies; then
         export COOKIES_EXPORTED=true
         return 0
     fi
-    
-    # SECOND: Try killing Edge and using Python script
-    if kill_edge_and_extract_cookies; then
+
+    # SECOND: Check if an existing cookies.txt can be used as fallback
+    if check_existing_cookies; then
         export COOKIES_EXPORTED=true
         return 0
     fi
@@ -1159,8 +1159,9 @@ patch_server() {
     if grep -q "--cookies-from-browser" "$SERVER_JS" 2>/dev/null && [ -f "$COOKIES_FILE" ]; then
         log "Patching server to use cookies file instead of browser..."
         
-        # Create a sed script to replace browser cookies with file cookies
-        if sed -i 's/--cookies-from-browser edge/--cookies '"$COOKIES_FILE"'/g' "$SERVER_JS" 2>/dev/null; then
+        # Create a sed script to replace browser cookies with file cookies safely
+        local SAFE_COOKIES_FILE=$(echo "$COOKIES_FILE" | sed 's/[\/&]/\\&/g')
+        if sed -i 's/--cookies-from-browser [^"'\'' ]*/--cookies '"$SAFE_COOKIES_FILE"'/g' "$SERVER_JS" 2>/dev/null; then
             ok "✅ Server patched to use cookies file!"
         else
             warn "Could not patch server (sed failed)"
@@ -1300,6 +1301,12 @@ start_server() {
     
     log "✅ Port $PORT is now available"
     
+    # Check if required modules are installed
+    if [ ! -d "node_modules/express" ]; then
+        warn "⚠️ 'express' module missing in $SERVER_DIR. Installing npm packages now..."
+        npm install
+    fi
+
     # Start server in background with DOWNLOADS_DIR environment variable
     DOWNLOADS_DIR="$DOWNLOADS_DIR" node "$SERVER_JS" > /tmp/youtube-downloader-server.log 2>&1 &
     SERVER_PID=$!
