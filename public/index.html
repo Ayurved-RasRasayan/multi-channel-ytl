@@ -240,15 +240,45 @@
         }
         
         /* Channel Stats Bar in Sidebar */
-        .channel-stats-bar {
+        .channel-stats-container {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 3px 5px;
+            flex-direction: column;
+            gap: 4px;
+            padding: 5px 6px;
             background: #f1f3f7;
             border-radius: 8px;
             margin-bottom: 10px;
             border: 1px solid #e0e4ec;
+        }
+
+        .channel-stats-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 4px;
+            width: 100%;
+        }
+
+        .channel-stats-summary-row {
+            margin-top: 1px;
+        }
+
+        .badge-total-downloads, .badge-total-queue {
+            flex: 1;
+            min-width: 0;
+            justify-content: center;
+            padding: 3px 3px;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+
+        .badge-text-fit {
+            white-space: nowrap;
+            overflow: visible;
+            display: inline-block;
+            max-width: 100%;
+            text-align: center;
+            font-size: 10px;
         }
 
         .sidebar-badge-btn {
@@ -2215,18 +2245,28 @@
                         </button>
                     </div>
                     
-                    <!-- Channel Stats Bar -->
-                    <div class="channel-stats-bar" id="channelListStatsBar">
-                        <div class="sidebar-badge-btn badge-no-channels" title="Total number of channels">
-                            CHANNEL:<span id="totalChannelsCount">0</span>
+                    <!-- Channel Stats Bar Container -->
+                    <div class="channel-stats-container" id="channelListStatsBar">
+                        <div class="channel-stats-row">
+                            <div class="sidebar-badge-btn badge-no-channels" title="Total number of channels">
+                                CHANNEL:<span id="totalChannelsCount">0</span>
+                            </div>
+                            <div style="display: flex; gap: 3px; align-items: center;">
+                                <button class="sidebar-badge-btn badge-sync-all" onclick="syncDownloadStatus()" title="Sync all channels">
+                                    SYNC ALL
+                                </button>
+                                <button class="sidebar-badge-btn badge-download-all" onclick="downloadAllChannels()" title="Download videos from all channels">
+                                    Download All
+                                </button>
+                            </div>
                         </div>
-                        <div style="display: flex; gap: 3px; align-items: center;">
-                            <button class="sidebar-badge-btn badge-sync-all" onclick="syncDownloadStatus()" title="Sync all channels">
-                                SYNC ALL
-                            </button>
-                            <button class="sidebar-badge-btn badge-download-all" onclick="downloadAllChannels()" title="Download videos from all channels">
-                                Download All
-                            </button>
+                        <div class="channel-stats-row channel-stats-summary-row">
+                            <div class="sidebar-badge-btn badge-no-channels badge-total-downloads" title="Total downloads across all channels">
+                                <span class="badge-text-fit">Total Download:<span id="totalDownloadsCount">0</span></span>
+                            </div>
+                            <div class="sidebar-badge-btn badge-no-channels badge-total-queue" title="Total queued videos across all channels">
+                                <span class="badge-text-fit">Total Queue:<span id="totalQueueCount">0</span></span>
+                            </div>
                         </div>
                     </div>
                     
@@ -2586,16 +2626,57 @@
         /**
          * Render the channel list sidebar
          */
+        function autoFitBadgeText(element) {
+            if (!element) return;
+            element.style.fontSize = '10px';
+            const parent = element.parentElement;
+            if (!parent) return;
+
+            const maxW = parent.clientWidth - 4; // allow small margin for padding/border
+            if (maxW <= 0) return;
+
+            let fontSize = 10;
+            while (fontSize > 4 && element.scrollWidth > maxW) {
+                fontSize -= 0.5;
+                element.style.fontSize = fontSize + 'px';
+            }
+        }
+
         function renderChannelList() {
             const container = document.getElementById('channelList');
             const emptyState = document.getElementById('channelListEmpty');
             const totalCountEl = document.getElementById('totalChannelsCount');
-            
-            // Update total count
+            const totalDownloadsEl = document.getElementById('totalDownloadsCount');
+            const totalQueueEl = document.getElementById('totalQueueCount');
+
+            // Calculate overall total downloads and total queue across all channels
+            let grandTotalDownloads = 0;
+            let grandTotalQueue = 0;
+
+            channels.forEach(channel => {
+                const channelVideos = channel.videos || (channel.data && channel.data.videos) || [];
+                channelVideos.forEach(v => {
+                    if (v.downloadStatus === 'completed' || v.downloadStatus === 'skipped' || v.syncStatus === 'downloaded') {
+                        grandTotalDownloads++;
+                    } else if (v.downloadStatus === 'queued') {
+                        grandTotalQueue++;
+                    }
+                });
+            });
+
+            // Update total count, downloads, and queue counts
             if (totalCountEl) {
                 totalCountEl.textContent = channels.length;
             }
-            
+            if (totalDownloadsEl) {
+                totalDownloadsEl.textContent = grandTotalDownloads;
+                autoFitBadgeText(totalDownloadsEl.closest('.badge-text-fit'));
+            }
+            if (totalQueueEl) {
+                totalQueueEl.textContent = grandTotalQueue;
+                autoFitBadgeText(totalQueueEl.closest('.badge-text-fit'));
+            }
+
             // Show/hide empty state
             if (channels.length === 0) {
                 emptyState.style.display = 'block';
