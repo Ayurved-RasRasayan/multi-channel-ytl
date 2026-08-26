@@ -1301,6 +1301,12 @@ start_server() {
     
     log "✅ Port $PORT is now available"
     
+    # Check if required modules are installed
+    if [ ! -d "node_modules/express" ]; then
+        warn "⚠️ 'express' module missing in $SERVER_DIR. Installing npm packages now..."
+        npm install
+    fi
+
     # Start server in background with DOWNLOADS_DIR environment variable
     DOWNLOADS_DIR="$DOWNLOADS_DIR" node "$SERVER_JS" > /tmp/youtube-downloader-server.log 2>&1 &
     SERVER_PID=$!
