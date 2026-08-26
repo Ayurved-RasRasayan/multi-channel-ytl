@@ -2483,17 +2483,56 @@
         // ==================== CHANNEL LIST MANAGEMENT ====================
         
         /**
+         * Check if a channel (by URL, handle, ID, or name) is already in the channel list
+         * @param {string} targetUrl
+         * @returns {boolean}
+         */
+        function isDuplicateChannel(targetUrl) {
+            if (!targetUrl || !channels || channels.length === 0) return false;
+
+            const cleanTarget = String(targetUrl).trim().toLowerCase().replace(/\/$/, '');
+            const targetHandle = extractHandle(targetUrl).toLowerCase();
+
+            return channels.some(ch => {
+                const chId = String(ch.id || '').toLowerCase();
+                const chName = String(ch.name || '').toLowerCase();
+                const chUrl = String(ch.url || '').toLowerCase().replace(/\/$/, '');
+                const chHandle = String(ch.handle || extractHandle(ch.url || ch.name) || '').toLowerCase();
+                const chYoutubeId = String(ch.data?.youtubeId || ch.youtubeId || '').toLowerCase();
+
+                if (chId && chId === cleanTarget) return true;
+                if (chYoutubeId && chYoutubeId === cleanTarget) return true;
+                if (chUrl && (chUrl === cleanTarget || chUrl.split('/').pop() === cleanTarget)) return true;
+                if (chName && (chName === cleanTarget || chName === cleanTarget.replace(/^@/, ''))) return true;
+                if (chHandle && chHandle !== '@unknown' && targetHandle !== '@unknown' && chHandle === targetHandle) return true;
+                if (chHandle && (chHandle === cleanTarget || chHandle.replace(/^@/, '') === cleanTarget.replace(/^@/, ''))) return true;
+
+                return false;
+            });
+        }
+
+        /**
          * Add a channel to the channel list (called after successful loadChannel)
          * @param {Object} channelData - The channel object from API response
+         * @param {boolean} skipDuplicateAlert - Set to true when loading saved channels on startup
          */
-        function addChannelToList(channelData) {
+        function addChannelToList(channelData, skipDuplicateAlert = false) {
             const channelVideos = channelData.videos || channelData.data?.videos || [];
-            // Check if channel already exists (by ID or URL)
+            // Check if channel already exists (by ID, URL, YoutubeID, or Name)
             const existingIndex = channels.findIndex(ch => 
-                ch.id === channelData.id || ch.url === channelData.url
+                ch.id === channelData.id ||
+                (ch.url && channelData.url && ch.url.toLowerCase() === channelData.url.toLowerCase()) ||
+                (ch.name && channelData.name && ch.name.toLowerCase() === channelData.name.toLowerCase()) ||
+                (ch.youtubeId && channelData.youtubeId && ch.youtubeId === channelData.youtubeId)
             );
             
             if (existingIndex >= 0) {
+                if (!skipDuplicateAlert) {
+                    alert('channel already in the list');
+                    showAlert('channel already in the list', 'warning');
+                    addLogEntry(`⚠️ Channel already in the list: ${channelData.name || channelData.id}`, 'warning');
+                    return false;
+                }
                 // Update existing channel
                 channels[existingIndex] = {
                     ...channels[existingIndex],
@@ -2515,6 +2554,7 @@
             }
             
             renderChannelList();
+            return true;
         }
         
         /**
@@ -3220,6 +3260,15 @@
                 const targetUrl = urls[i];
                 const progressMsg = urls.length > 1 ? ` (${i + 1}/${urls.length})` : '';
 
+                // Check if channel is already in the channel list
+                if (isDuplicateChannel(targetUrl)) {
+                    alert('channel already in the list');
+                    showAlert('channel already in the list', 'warning');
+                    addLogEntry(`⚠️ Aborted loading: "${targetUrl}" - channel already in the list`, 'warning');
+                    failCount++;
+                    continue;
+                }
+
                 showAlert(`📡 Fetching channel${progressMsg}: ${targetUrl}...`, 'info');
                 addLogEntry(`📡 Loading channel${progressMsg}: ${targetUrl}`, 'info');
 
@@ -3237,14 +3286,29 @@
                     }
 
                     const loadedChannel = data.channel;
-                    addChannelToList(loadedChannel);
-                    successCount++;
 
-                    if (!firstLoadedChannelId) {
-                        firstLoadedChannelId = loadedChannel.id;
+                    // Double check if the loaded channel is already in the channel list
+                    if (isDuplicateChannel(loadedChannel.id) ||
+                        isDuplicateChannel(loadedChannel.url) ||
+                        isDuplicateChannel(loadedChannel.youtubeId) ||
+                        isDuplicateChannel(loadedChannel.name)) {
+                        alert('channel already in the list');
+                        showAlert('channel already in the list', 'warning');
+                        addLogEntry(`⚠️ Aborted adding: "${loadedChannel.name}" - channel already in the list`, 'warning');
+                        failCount++;
+                        continue;
                     }
 
-                    addLogEntry(`✅ Channel loaded: ${loadedChannel.name} (${loadedChannel.videos?.length || 0} videos)`, 'success');
+                    const added = addChannelToList(loadedChannel);
+                    if (added) {
+                        successCount++;
+                        if (!firstLoadedChannelId) {
+                            firstLoadedChannelId = loadedChannel.id;
+                        }
+                        addLogEntry(`✅ Channel loaded: ${loadedChannel.name} (${loadedChannel.videos?.length || 0} videos)`, 'success');
+                    } else {
+                        failCount++;
+                    }
                 } catch (error) {
                     failCount++;
                     console.error(`[Load Channel] Error loading ${targetUrl}:`, error);
@@ -3263,6 +3327,8 @@
             if (urls.length === 1) {
                 if (successCount === 1) {
                     showAlert(`✅ Loaded channel successfully`, 'success', 4000);
+                } else if (failCount > 0 && successCount === 0) {
+                    showAlert(`channel already in the list`, 'warning', 6000);
                 } else {
                     showAlert(`❌ Failed to load channel`, 'error', 6000);
                 }
@@ -4410,15 +4476,9 @@
                 const response = await fetch(`${API_BASE}/api/channels`);
                 const data = await response.json();
                 if (data.success && Array.isArray(data.channels) && data.channels.length > 0) {
-                    channels = data.channels.map(ch => ({
-                        id: ch.id,
-                        name: ch.name,
-                        url: ch.url,
-                        handle: extractHandle(ch.url || ch.name),
-                        videoCount: ch.videoCount || (ch.videos ? ch.videos.length : 0),
-                        data: ch,
-                        videos: ch.videos || []
-                    }));
+                    data.channels.forEach(ch => {
+                        addChannelToList(ch, true);
+                    });
                     renderChannelList();
 
                     const savedActive = localStorage.getItem('ytl_active_channel');
