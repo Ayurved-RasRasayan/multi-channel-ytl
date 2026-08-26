@@ -2010,6 +2010,38 @@ const handleChannelSync = (req, res) => {
     }
 };
 
+// Endpoint to save/persist all channels into database
+app.post('/api/channels/save-all', (req, res) => {
+    console.log('\n[Save Channels] POST /api/channels/save-all requested');
+    try {
+        const clientChannels = req.body && Array.isArray(req.body.channels) ? req.body.channels : [];
+        let savedCount = 0;
+
+        clientChannels.forEach(ch => {
+            if (ch && ch.id) {
+                savedChannels.set(ch.id, ch);
+                savedCount++;
+            }
+        });
+
+        saveDatabase();
+        console.log(`[Save Channels] ✅ Persisted ${savedCount} channels to db_channels.json`);
+
+        res.json({
+            success: true,
+            savedCount: savedCount,
+            totalChannels: savedChannels.size,
+            message: `Successfully saved ${savedCount} channels to database`
+        });
+    } catch (error) {
+        console.error('[Save Channels] Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to save channels: ' + error.message
+        });
+    }
+});
+
 // Endpoint to sync all channels at once
 app.post('/api/channels/sync-all', (req, res) => {
     console.log('\n[Sync All] POST /api/channels/sync-all requested');

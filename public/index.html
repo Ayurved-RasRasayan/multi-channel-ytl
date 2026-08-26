@@ -239,10 +239,10 @@
             gap: 6px;
         }
         
-        /* Channel Stats Bar in Sidebar - 3 Badges Layout */
+        /* Channel Stats Bar in Sidebar - 4 Badges Layout */
         .channel-stats-bar {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 4px;
             padding: 6px;
             background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
@@ -273,6 +273,16 @@
             color: #1565c0;
             border: 1px solid #bbdefb;
             cursor: default;
+        }
+
+        .badge-save-channels {
+            background: linear-gradient(135deg, #4b6cb7 0%, #182848 100%);
+            color: white;
+        }
+
+        .badge-save-channels:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(75, 108, 183, 0.4);
         }
 
         .badge-sync-all {
@@ -2187,11 +2197,14 @@
                         <h3 class="channel-list-title">📂 Channels</h3>
                     </div>
                     
-                    <!-- Channel Stats Bar: 3 Badges (No of Channels, Sync All, Download All) -->
+                    <!-- Channel Stats Bar: 4 Badges (No of Channels, Save, Sync All, Download All) -->
                     <div class="channel-stats-bar" id="channelListStatsBar">
                         <div class="sidebar-badge-btn badge-no-channels" title="Total number of channels">
                             📺 Channels: <span id="totalChannelsCount" style="margin-left:2px;">0</span>
                         </div>
+                        <button class="sidebar-badge-btn badge-save-channels" id="saveChannelsBtn" onclick="saveChannelsToDb()" title="Save channel list to database">
+                            💾 Save
+                        </button>
                         <button class="sidebar-badge-btn badge-sync-all" onclick="syncDownloadStatus()" title="Sync all channels">
                             🔄 Sync All
                         </button>
@@ -4337,6 +4350,39 @@
                 }
             } catch (e) {
                 console.warn('Could not save channels to localStorage:', e);
+            }
+        }
+
+        async function saveChannelsToDb() {
+            const btn = document.getElementById('saveChannelsBtn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '⏳ Saving...';
+            }
+
+            try {
+                saveChannels(); // Save to localStorage first
+                const response = await fetch(`${API_BASE}/api/channels/save-all`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channels: channels })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    showAlert(`💾 Saved ${channels.length} channels to database`, 'success', 3000);
+                    addLogEntry(`💾 Saved ${channels.length} channels to database`, 'success');
+                } else {
+                    throw new Error(data.error || 'Failed to save channels');
+                }
+            } catch (error) {
+                console.error('[Save Channels] Error:', error);
+                showAlert(`❌ Failed to save channels: ${error.message}`, 'error', 4000);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '💾 Save';
+                }
             }
         }
         
