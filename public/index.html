@@ -2541,6 +2541,9 @@
                 const isActive = channel.id === activeChannelId;
                 const channelVideos = channel.videos || (channel.data && channel.data.videos) || [];
                 const total = channelVideos.length || channel.videoCount || 0;
+                const downloaded = channelVideos.filter(v =>
+                    v.downloadStatus === 'completed' || v.downloadStatus === 'skipped' || v.syncStatus === 'downloaded'
+                ).length;
 
                 html += `
                     <div class="channel-item ${isActive ? 'active' : ''}" 
@@ -2550,7 +2553,7 @@
                         <div class="channel-item-content">
                             <div class="channel-item-name">${escapeHtml(channel.handle || channel.name)}</div>
                             <div class="channel-item-meta" style="margin-top: 2px;">
-                                <span class="channel-item-videos">${total} videos</span>
+                                <span class="channel-item-videos">${downloaded}/${total} videos</span>
                             </div>
                         </div>
                         <div class="channel-item-actions">
