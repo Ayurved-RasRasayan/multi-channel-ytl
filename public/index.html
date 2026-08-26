@@ -3476,6 +3476,10 @@
                                         }
                                         if (status.exists) {
                                             video.downloadStatus = 'completed';
+                                        } else {
+                                            if (video.downloadStatus === 'completed') {
+                                                video.downloadStatus = null;
+                                            }
                                         }
                                     }
                                 });

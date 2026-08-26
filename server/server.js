@@ -480,9 +480,17 @@ function loadDatabase() {
             const parsed = JSON.parse(data);
             if (Array.isArray(parsed)) {
                 parsed.forEach(ch => {
-                    if (ch && ch.id) savedChannels.set(ch.id, ch);
+                    if (ch && ch.id) {
+                        const existing = Array.from(savedChannels.values()).find(
+                            existingCh => (ch.youtubeId && existingCh.youtubeId === ch.youtubeId) ||
+                                          (ch.url && existingCh.url === ch.url)
+                        );
+                        if (!existing) {
+                            savedChannels.set(ch.id, ch);
+                        }
+                    }
                 });
-                console.log(`[Database] Loaded ${savedChannels.size} channels from DB file.`);
+                console.log(`[Database] Loaded ${savedChannels.size} unique channels from DB file.`);
             }
         }
     } catch (e) {
@@ -1763,21 +1771,29 @@ app.post('/api/channels', async (req, res) => {
         console.log('[Channels] Videos found:', channelData.videos.length);
         console.log('[Channels] Live videos found:', channelData.liveVideos.length);
         
-        // Create channel object (without sync/badge related fields - MODIFICATION 1)
+        // Create channel object
         const videosClean = channelData.videos.map(video => ({
             ...video
         }));
         
-        // Create channel object
+        // Deduplicate channel in savedChannels
+        let existingChannel = null;
+        for (const ch of savedChannels.values()) {
+            if ((ch.youtubeId && ch.youtubeId === channelIdFinal) || (ch.url && ch.url === channelUrl)) {
+                existingChannel = ch;
+                break;
+            }
+        }
+
         const channel = {
-            id: uuidv4(),
+            id: existingChannel ? existingChannel.id : uuidv4(),
             youtubeId: channelIdFinal,
             url: channelUrl,
             name: name || channelIdFinal,
             videoCount: channelData.videos.length + channelData.liveVideos.length,
             videos: videosClean,
             liveVideos: channelData.liveVideos,
-            addedAt: new Date().toISOString(),
+            addedAt: existingChannel ? existingChannel.addedAt : new Date().toISOString(),
             lastChecked: new Date().toISOString(),
             status: 'active'
         };
@@ -1837,9 +1853,11 @@ function performDiskScanForChannel(channel) {
     const videos = channel.videos || [];
     const channelDir = getChannelDownloadDir(channel.name);
     let downloadedFiles = [];
+
+    // Check channel-specific directory
     if (fs.existsSync(channelDir)) {
         try {
-            downloadedFiles = fs.readdirSync(channelDir)
+            const files = fs.readdirSync(channelDir)
                 .filter(file => file.toLowerCase().endsWith('.mp4'))
                 .map(file => ({
                     name: file,
@@ -1847,34 +1865,65 @@ function performDiskScanForChannel(channel) {
                     size: fs.statSync(path.join(channelDir, file)).size,
                     modifiedAt: fs.statSync(path.join(channelDir, file)).mtime.toISOString()
                 }));
+            downloadedFiles.push(...files);
         } catch (err) {
             console.error(`[Disk Scan] Error reading ${channelDir}:`, err.message);
         }
     }
 
-    const actualFileSet = new Set(downloadedFiles.map(f => f.name.toLowerCase()));
+    // Also check root DOWNLOADS_DIR if different
+    if (fs.existsSync(DOWNLOADS_DIR) && path.resolve(DOWNLOADS_DIR) !== path.resolve(channelDir)) {
+        try {
+            const files = fs.readdirSync(DOWNLOADS_DIR)
+                .filter(file => file.toLowerCase().endsWith('.mp4'))
+                .map(file => ({
+                    name: file,
+                    path: path.join(DOWNLOADS_DIR, file),
+                    size: fs.statSync(path.join(DOWNLOADS_DIR, file)).size,
+                    modifiedAt: fs.statSync(path.join(DOWNLOADS_DIR, file)).mtime.toISOString()
+                }));
+            downloadedFiles.push(...files);
+        } catch (err) {
+            console.error(`[Disk Scan] Error reading ${DOWNLOADS_DIR}:`, err.message);
+        }
+    }
+
     const consumedFiles = new Set();
 
     const syncResults = videos.map((video) => {
+        const vidId = (video.id || video.videoId || '').toLowerCase();
         const expectedFilename = (video.finalFilename || '').toLowerCase();
-        const fileExists = actualFileSet.has(expectedFilename);
-        const isDownloaded = fileExists && !consumedFiles.has(expectedFilename);
-        let fileInfo = null;
-        if (isDownloaded) {
-            consumedFiles.add(expectedFilename);
-            const matchingFile = downloadedFiles.find(f => f.name.toLowerCase() === expectedFilename);
-            if (matchingFile) {
-                fileInfo = {
-                    fileName: matchingFile.name,
-                    filePath: matchingFile.path,
-                    fileSize: matchingFile.size
-                };
-            }
+        const downloadFilename = (video.downloadFilename || '').toLowerCase();
+        const sanitizedBase = video.sanitizedBase ? `${video.sanitizedBase.toLowerCase()}.mp4` : '';
+        const titleSanitized = sanitizeViaPython(video.title || '').toLowerCase() + '.mp4';
+
+        // Find a matching file on disk
+        let matchingFile = downloadedFiles.find(f => {
+            if (consumedFiles.has(f.path)) return false;
+            const fname = f.name.toLowerCase();
+
+            if (expectedFilename && fname === expectedFilename) return true;
+            if (downloadFilename && fname === downloadFilename) return true;
+            if (sanitizedBase && fname === sanitizedBase) return true;
+            if (titleSanitized && fname === titleSanitized) return true;
+            if (vidId && fname.includes(vidId)) return true;
+
+            return false;
+        });
+
+        const isDownloaded = !!matchingFile;
+        if (isDownloaded && matchingFile) {
+            consumedFiles.add(matchingFile.path);
         }
+
         return {
             id: video.id || video.videoId,
             isDownloaded: isDownloaded,
-            fileInfo: fileInfo
+            fileInfo: matchingFile ? {
+                fileName: matchingFile.name,
+                filePath: matchingFile.path,
+                fileSize: matchingFile.size
+            } : null
         };
     });
 
@@ -1896,6 +1945,10 @@ function performDiskScanForChannel(channel) {
             }
             if (statusMatch.exists) {
                 v.downloadStatus = 'completed';
+            } else {
+                if (v.downloadStatus === 'completed') {
+                    v.downloadStatus = null;
+                }
             }
         }
     });
@@ -1923,24 +1976,15 @@ const handleChannelSync = (req, res) => {
         
         const channel = savedChannels.get(id);
 
-        if (!initialDiskSyncDone) {
-            console.log('[Sync] Initial disk scan requested for channel:', channel.name);
-            performDiskScanForChannel(channel);
-            initialDiskSyncDone = true;
-            saveDatabase();
-        }
+        console.log('[Sync] Performing disk scan for channel:', channel.name);
+        const scanRes = performDiskScanForChannel(channel);
+        initialDiskSyncDone = true;
+        saveDatabase();
 
         const videos = channel.videos || [];
         const totalVideos = videos.length;
-        const downloadedCount = videos.filter(v => v.syncStatus === 'downloaded' || v.downloadStatus === 'completed').length;
+        const downloadedCount = scanRes.downloaded;
         const remainingCount = totalVideos - downloadedCount;
-
-        const videoStatuses = videos.map(v => ({
-            videoId: v.id || v.videoId,
-            exists: v.syncStatus === 'downloaded' || v.downloadStatus === 'completed',
-            filename: v.finalFilename || null,
-            filePath: v.filePath || null
-        }));
 
         res.json({
             success: true,
@@ -1953,7 +1997,7 @@ const handleChannelSync = (req, res) => {
                 percentage: totalVideos > 0 ? ((downloadedCount / totalVideos) * 100).toFixed(1) : 0
             },
             videos: videos,
-            videoStatuses: videoStatuses,
+            videoStatuses: scanRes.videoStatuses,
             scannedAt: new Date().toISOString()
         });
         
@@ -1977,33 +2021,11 @@ app.post('/api/channels/sync-all', (req, res) => {
             }
         });
 
-        const performDiskScanNow = !initialDiskSyncDone;
-        if (performDiskScanNow) {
-            console.log('[Sync All] First sync after server start: Scanning download folder as MASTER point.');
-        }
+        console.log('[Sync All] Performing disk scan for all channels as MASTER point.');
 
         const channelSyncResults = {};
         for (const [id, channel] of savedChannels.entries()) {
-            let scanRes;
-            if (performDiskScanNow) {
-                scanRes = performDiskScanForChannel(channel);
-            } else {
-                const videos = channel.videos || [];
-                const total = videos.length;
-                const downloaded = videos.filter(v => v.syncStatus === 'downloaded' || v.downloadStatus === 'completed').length;
-                const videoStatuses = videos.map(v => ({
-                    videoId: v.id || v.videoId,
-                    exists: v.syncStatus === 'downloaded' || v.downloadStatus === 'completed',
-                    filename: v.finalFilename || null,
-                    filePath: v.filePath || null
-                }));
-                scanRes = {
-                    total: total,
-                    downloaded: downloaded,
-                    videoStatuses: videoStatuses
-                };
-            }
-
+            const scanRes = performDiskScanForChannel(channel);
             savedChannels.set(id, channel);
 
             channelSyncResults[id] = {
@@ -2018,10 +2040,8 @@ app.post('/api/channels/sync-all', (req, res) => {
             };
         }
 
-        if (performDiskScanNow) {
-            initialDiskSyncDone = true;
-            saveDatabase();
-        }
+        initialDiskSyncDone = true;
+        saveDatabase();
 
         res.json({
             success: true,
