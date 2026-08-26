@@ -469,21 +469,6 @@
             transform: scale(1.1);
         }
         
-        /* Active indicator arrow */
-        .channel-active-indicator {
-            position: absolute;
-            right: 10px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #667eea;
-            font-size: 14px;
-            opacity: 0;
-            transition: opacity 0.25s ease;
-        }
-        
-        .channel-item.active .channel-active-indicator {
-            opacity: 1;
-        }
         
         /* Empty state for channel list */
         .channel-list-empty {
@@ -2236,7 +2221,6 @@
                                     <span class="channel-item-videos">137 videos</span>
                                 </div>
                             </div>
-                            <span class="channel-active-indicator">◀</span>
                             <div class="channel-item-actions">
                                 <button class="channel-item-btn channel-item-btn-delete" onclick="event.stopPropagation(); deleteChannel('xxx')">🗑</button>
                             </div>
@@ -2569,7 +2553,6 @@
                                 <span class="channel-item-videos">${total} videos</span>
                             </div>
                         </div>
-                        <span class="channel-active-indicator">◀</span>
                         <div class="channel-item-actions">
                             <button class="channel-item-btn channel-item-btn-delete" 
                                     onclick="event.stopPropagation(); deleteChannel('${channel.id}')" 
