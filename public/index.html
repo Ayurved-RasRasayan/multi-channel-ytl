@@ -734,27 +734,27 @@
         .video-item {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 8px 12px;
+            gap: 8px;
+            padding: 4px 8px;
             border: 1px solid #e0e0e0;
             border-radius: 6px;
-            margin-bottom: 4px;
+            margin-bottom: 3px;
             background: #fafafa;
             transition: all 0.2s ease;
             position: relative;
             overflow: hidden;
-            min-height: 48px;
+            min-height: 38px;
             height: auto;
         }
 
         .downloaded-file-badge {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
+            gap: 4px;
             background: #e8f5e9;
             color: #2e7d32;
             border: 1px solid #a5d6a7;
-            padding: 2px 8px;
+            padding: 1px 8px;
             border-radius: 6px;
             font-size: 11px;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
@@ -762,7 +762,9 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            margin-top: 3px;
+            margin-top: 0;
+            flex: 1;
+            min-width: 0;
         }
 
         .downloaded-file-badge .file-name {
@@ -851,7 +853,7 @@
             flex: 1;
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 3px;
             overflow: hidden;
         }
 
@@ -2535,7 +2537,9 @@
             const totalCountEl = document.getElementById('totalChannelsCount');
             
             // Update total count
-            totalCountEl.textContent = channels.length;
+            if (totalCountEl) {
+                totalCountEl.textContent = channels.length;
+            }
             
             // Show/hide empty state
             if (channels.length === 0) {
@@ -3348,7 +3352,7 @@
             let statusBadge = '';
             if (video.downloadStatus === 'downloading') {
                 statusBadge = `<span class="status-badge status-downloading">▶️ ${video.progress || 0}%</span>`;
-            } else if (video.downloadStatus === 'completed') {
+            } else if (video.downloadStatus === 'completed' || video.syncStatus === 'downloaded') {
                 statusBadge = `<span class="status-badge status-completed">✅ Done</span>`;
             } else if (video.downloadStatus === 'skipped') {
                 statusBadge = `<span class="status-badge status-skipped">⏭ Skip</span>`;
@@ -3391,25 +3395,25 @@
 
             return `
                 <div class="video-item ${statusClass}" data-index="${originalIndex}">
-                    <input type="checkbox" class="video-checkbox" ${isChecked ? 'checked' : ''} onchange="toggleVideoSelection(${originalIndex})">
                     <div class="video-info">
                         <div class="video-titles-container">
                             <div class="video-title-original" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</div>
                             <div class="video-title-sanitized" title="${escapeHtml(sanitizedTitle)}">${escapeHtml(sanitizedTitle)}</div>
                         </div>
-                        ${extraBadges ? `<div>${extraBadges}</div>` : ''}
                         <div class="video-meta">
+                            <input type="checkbox" class="video-checkbox" ${isChecked ? 'checked' : ''} onchange="toggleVideoSelection(${originalIndex})">
                             ${formatDuration(video.duration)}
                             ${formatNumber(video.viewCount) ? `👁 ${formatNumber(video.viewCount)}` : ''}
                             ${statusBadge}
+                            ${fileBadge}
                             ${inlineProgressBar}
+                            ${extraBadges}
+                            <div class="video-actions" style="margin-left: auto;">
+                                ${!video.downloadStatus || video.downloadStatus === 'error'
+                                    ? `<button class="btn-primary btn-small" onclick="downloadVideo(${originalIndex})">⬇️</button>`
+                                    : ''}
+                            </div>
                         </div>
-                        ${fileBadge}
-                    </div>
-                    <div class="video-actions">
-                        ${!video.downloadStatus || video.downloadStatus === 'error' 
-                            ? `<button class="btn-primary btn-small" onclick="downloadVideo(${originalIndex})">⬇️</button>` 
-                            : ''}
                     </div>
                 </div>
             `;
