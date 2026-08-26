@@ -468,16 +468,6 @@
             color: white;
             transform: scale(1.1);
         }
-
-        .channel-item-btn-stop {
-            background: #1976d2;
-            color: white;
-        }
-
-        .channel-item-btn-stop:hover {
-            background: #1565c0;
-            transform: scale(1.1);
-        }
         
         /* Active indicator arrow */
         .channel-active-indicator {
@@ -2585,11 +2575,6 @@
                                     onclick="event.stopPropagation(); deleteChannel('${channel.id}')" 
                                     title="Remove channel from list">
                                 🗑
-                            </button>
-                            <button class="channel-item-btn channel-item-btn-stop"
-                                    onclick="event.stopPropagation(); stopChannelDownloads('${channel.id}')"
-                                    title="Stop all downloads for this channel">
-                                ⏸
                             </button>
                         </div>
                     </div>
