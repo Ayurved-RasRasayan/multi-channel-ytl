@@ -44,7 +44,7 @@ def extract_edge_cookies():
             cursor.execute("""
                 SELECT host_key, path, is_secure, expires_utc, name, value
                 FROM cookies
-                WHERE host_key LIKE '%youtube.com%'
+                WHERE host_key LIKE '%youtube.com%' OR host_key LIKE '%google.com%'
             """)
 
             count = 0
