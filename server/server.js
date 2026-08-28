@@ -2608,8 +2608,22 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
         console.log(`[Execute Download] Output dir: ${outputDir}`);
 
         // Build arguments - use SHORT temp path to avoid truncation!
+        // ⭐⭐⭐ BUG FIX #9: Combine video+audio format when merge is needed ⭐⭐⭐
+        // PROBLEM: When needsMerge=true, formatInfo.formatId is video-only (e.g. "247"),
+        // so yt-dlp downloads ONLY the video stream → no audio in output.
+        // SOLUTION: Combine video+audio IDs as "247+140" so yt-dlp fetches both streams.
+        let formatSelector = formatInfo.formatId;
+        if (formatInfo.needsMerge && formatInfo.audioFormatId) {
+            formatSelector = `${formatInfo.formatId}+${formatInfo.audioFormatId}`;
+            console.log(`[Execute Download] 🔊 MERGE MODE: combining video (${formatInfo.formatId}) + audio (${formatInfo.audioFormatId})`);
+        } else if (formatInfo.needsMerge && !formatInfo.audioFormatId) {
+            // No specific audio format found, let yt-dlp pick best audio automatically
+            formatSelector = `${formatInfo.formatId}+bestaudio`;
+            console.log(`[Execute Download] 🔊 MERGE MODE: combining video (${formatInfo.formatId}) + bestaudio`);
+        }
+
         const args = [
-            '-f', formatInfo.formatId,
+            '-f', formatSelector,
             '-o', tempPath,  // ⭐ KEY: Use SHORT path, not long one!
             '--no-playlist',
             '--embed-chapters',
@@ -3102,10 +3116,19 @@ function parseFormatsFromText(text) {
     }
     
     // Mark formats that need merging (video without audio or vice versa)
+    // ⭐⭐⭐ BUG FIX #10: Fixed 'line' out-of-scope ReferenceError ⭐⭐⭐
+    // PROBLEM: The old code used 'line' (from the for loop above) inside forEach,
+    // but 'line' was const-scoped to the for loop and inaccessible here → ReferenceError.
+    // SOLUTION: Determine needsMerge from the parsed fields directly.
     formats.forEach(f => {
-        if (!f.isAudioOnly && f.acodec !== 'unknown' && f.vcodec !== null) {
-            // Has both, check if they're separate
-            f.needsMerge = line.includes('video only');
+        if (f.isAudioOnly) {
+            f.needsMerge = false; // Audio-only formats don't need merge themselves
+        } else if (!f.acodec || f.acodec === 'unknown' || !f.vcodec || f.vcodec === 'unknown') {
+            // Video format with no audio codec info → video-only DASH stream, needs merge
+            f.needsMerge = true;
+        } else {
+            // Has both video and audio codecs → combined format, no merge needed
+            f.needsMerge = false;
         }
     });
     
