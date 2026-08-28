@@ -1590,6 +1590,7 @@ app.post('/api/download', async (req, res) => {
             url: videoUrl,
             videoId: videoId,
             channelId: channelId,
+            channelName: channelName || null,
             title: title || null,
             filename: outputFilename,
             outputPath: outputPath,
@@ -2172,6 +2173,7 @@ app.get('/api/download-queue', (req, res) => {
             videoId: fullDl.videoId,
             title: d.title || fullDl.title,
             filename: fullDl.filename,
+            channelName: fullDl.channelName || null,
             status: 'downloading',
             progress: fullDl.progress || 0,
             speed: fullDl.speed || null,
@@ -2195,6 +2197,7 @@ app.get('/api/download-queue', (req, res) => {
             videoId: fullDl.videoId,
             title: job.videoTitle || fullDl.title,
             filename: fullDl.filename,
+            channelName: fullDl.channelName || null,
             status: 'queued',
             progress: 0,
             url: fullDl.url
@@ -2224,6 +2227,7 @@ app.get('/api/download-queue', (req, res) => {
             active: activeAndQueued,
             completed: completed
         },
+        pendingBufferCount: downloadQueue.pendingBuffer.length,
         timestamp: new Date().toISOString()
     });
 });
@@ -2246,22 +2250,22 @@ app.delete('/api/download-queue', (req, res) => {
 /**
  * Global download queue system
  * - maxConcurrent: Maximum downloads running at once (2)
- * - maxVisibleQueue: Maximum items visible in active queue (50)
- * - replenishThreshold: When active visible queue <= 10 items, replenish to 50 from pendingBuffer
+ * - maxVisibleQueue: Maximum items visible in active queue (25)
+ * - replenishThreshold: When active visible queue <= 5 items, replenish to 25 from pendingBuffer
  * - activeJobs: Array of CURRENTLY RUNNING job objects (max 2)
- * - queue: Array of visible download jobs waiting for a slot (max 50)
+ * - queue: Array of visible download jobs waiting for a slot (max 25)
  * - pendingBuffer: Array of buffered jobs saved in database/server pool
  */
 const downloadQueue = {
     maxConcurrent: 2,                    // ⭐ MAX 2 downloads at a time
-    maxVisibleQueue: 50,                  // ⭐ MAX 50 visible queued items
-    replenishThreshold: 10,               // ⭐ Replenish when visible queue <= 10
+    maxVisibleQueue: 25,                  // ⭐ MAX 25 visible queued items
+    replenishThreshold: 5,                // ⭐ Replenish when visible queue <= 5
     activeJobs: [],                      // Track ACTUALLY running jobs
-    queue: [],                           // Visible waiting jobs (max 50)
+    queue: [],                           // Visible waiting jobs (max 25)
     pendingBuffer: [],                   // Buffered pending jobs saved in server state
     
     /**
-     * Replenish visible queue from pendingBuffer when total visible items drop to <= 10
+     * Replenish visible queue from pendingBuffer when total visible items drop to <= 5
      */
     replenishQueue() {
         if (this.pendingBuffer.length === 0) return;
@@ -2284,7 +2288,7 @@ const downloadQueue = {
     /**
      * Add a download job to the queue
      * If < 2 active, start immediately
-     * Otherwise, wait in queue (or pendingBuffer if queue >= 50)
+     * Otherwise, wait in queue (or pendingBuffer if queue >= 25)
      */
     enqueue(downloadId, videoUrl, outputPath, videoTitle) {
         const job = { 
@@ -2361,6 +2365,7 @@ const downloadQueue = {
     /**
      * Called when a download finishes (success or fail)
      * Frees a slot and starts next queued job if any
+     * ⭐ 5-second delay between downloads to avoid rate limiting
      */
     onJobComplete(completedJob) {
         if (completedJob) {
@@ -2379,29 +2384,35 @@ const downloadQueue = {
         console.log(`\n[Download Queue] 📊 Status: Active=${this.activeJobs.length}/${this.maxConcurrent} | Visible Queue=${this.queue.length} | Buffered=${this.pendingBuffer.length}`);
         
         if (this.queue.length > 0 && this.activeJobs.length < this.maxConcurrent) {
-            const nextJob = this.queue.shift();
-            
-            if (!nextJob) {
-                console.log('[Download Queue] ⚠️ Next job is null, skipping');
-                return;
-            }
-            
-            const alreadyRunning = this.activeJobs.find(j => j.downloadId === nextJob.downloadId);
-            if (alreadyRunning) {
-                console.log(`[Download Queue] ⚠️ Next job already running, skipping: ${nextJob.videoTitle?.substring(0, 30)}...`);
-                return;
-            }
-            
-            this.activeJobs.push(nextJob);
+            console.log(`[Download Queue] ⏳ Waiting 5 seconds before starting next download...`);
+            setTimeout(() => {
+                // Re-check after delay (state may have changed)
+                if (this.queue.length === 0 || this.activeJobs.length >= this.maxConcurrent) return;
 
-            console.log(`[Download Queue] ▶️ Reserved slot and starting next in queue: ${nextJob.videoTitle?.substring(0, 30)}...`);
-            console.log(`[Download Queue] Remaining in queue: ${this.queue.length} (buffered: ${this.pendingBuffer.length})`);
-            
-            const resIdx = this.activeJobs.findIndex(j => j.downloadId === nextJob.downloadId);
-            if (resIdx !== -1) {
-                this.activeJobs.splice(resIdx, 1);
-            }
-            this.executeJob(nextJob);
+                const nextJob = this.queue.shift();
+                
+                if (!nextJob) {
+                    console.log('[Download Queue] ⚠️ Next job is null, skipping');
+                    return;
+                }
+                
+                const alreadyRunning = this.activeJobs.find(j => j.downloadId === nextJob.downloadId);
+                if (alreadyRunning) {
+                    console.log(`[Download Queue] ⚠️ Next job already running, skipping: ${nextJob.videoTitle?.substring(0, 30)}...`);
+                    return;
+                }
+                
+                this.activeJobs.push(nextJob);
+
+                console.log(`[Download Queue] ▶️ Reserved slot and starting next in queue: ${nextJob.videoTitle?.substring(0, 30)}...`);
+                console.log(`[Download Queue] Remaining in queue: ${this.queue.length} (buffered: ${this.pendingBuffer.length})`);
+                
+                const resIdx = this.activeJobs.findIndex(j => j.downloadId === nextJob.downloadId);
+                if (resIdx !== -1) {
+                    this.activeJobs.splice(resIdx, 1);
+                }
+                this.executeJob(nextJob);
+            }, 5000);
             
         } else if (this.queue.length === 0 && this.pendingBuffer.length === 0 && this.activeJobs.length === 0) {
             console.log('[Download Queue] 🎉 All downloads complete! Queue empty.');
