@@ -1447,6 +1447,24 @@
             color: #f57c00;
         }
         
+        .queue-stat.buffered-count {
+            color: #7b1fa2;
+        }
+        
+        .queue-channel-tag {
+            font-size: 0.7em;
+            color: #1565c0;
+            background: #e3f2fd;
+            border: 1px solid #90caf9;
+            padding: 1px 6px;
+            border-radius: 8px;
+            white-space: nowrap;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex-shrink: 0;
+        }
+        
         .queue-item {
             display: flex;
             justify-content: space-between;
@@ -2411,6 +2429,7 @@
                         <div class="queue-stats" id="queueStats">
                             <span class="queue-stat active-count">🟢 Active: <strong id="activeCount">0</strong>/2</span>
                             <span class="queue-stat waiting-count">⏳ Waiting: <strong id="waitingCount">0</strong></span>
+                            <span class="queue-stat buffered-count" id="bufferedStat" style="display:none;">📦 Buffered: <strong id="bufferedCount">0</strong></span>
                         </div>
                         <div style="display: flex; gap: 6px;">
                             <button class="btn-secondary btn-small" onclick="refreshQueue()">🔄</button>
@@ -2882,9 +2901,13 @@
             showAlert(`⬇️ Queuing remaining videos across all channels...`, 'info', 5000);
             addLogEntry(`⬇️ Starting download for all unsynced/remaining videos in all channels`, 'info');
             
+            startPolling();
+
             let totalQueued = 0;
             let errorCount = 0;
 
+            // Build a flat list of all videos to download across all channels
+            const allToDownload = [];
             for (const ch of channels) {
                 let chVideos = ch.videos || (ch.data && ch.data.videos) || [];
                 if (!chVideos || chVideos.length === 0) {
@@ -2909,43 +2932,61 @@
                 );
 
                 for (const video of remaining) {
-                    try {
-                        const response = await fetch(`${API_BASE}/api/download`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                videoId: video.id || video.videoId,
-                                title: video.displayTitle || video.title,
-                                finalFilename: video.finalFilename || null,
-                                downloadFilename: video.downloadFilename || null,
-                                channelId: ch.id,
-                                channelName: ch.name,
-                                format: 'best',
-                                quality: 'lowest'
-                            })
-                        });
-
-                        const result = await response.json();
-                        if (result.status === 'queued' || result.downloadId) {
-                            video.downloadStatus = 'queued';
-                            video.downloadId = result.downloadId;
-                            totalQueued++;
-                        }
-                    } catch (err) {
-                        errorCount++;
-                    }
+                    allToDownload.push({ video, channel: ch });
                 }
             }
 
-            renderVideos();
-            refreshQueue();
-            startPolling();
+            const totalCount = allToDownload.length;
+            addLogEntry(`⬇️ Total ${totalCount} videos to queue across all channels`, 'info');
+
+            for (let qi = 0; qi < allToDownload.length; qi++) {
+                const { video, channel: ch } = allToDownload[qi];
+                try {
+                    const response = await fetch(`${API_BASE}/api/download`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            videoId: video.id || video.videoId,
+                            title: video.displayTitle || video.title,
+                            finalFilename: video.finalFilename || null,
+                            downloadFilename: video.downloadFilename || null,
+                            channelId: ch.id,
+                            channelName: ch.name,
+                            format: 'best',
+                            quality: 'lowest'
+                        })
+                    });
+
+                    const result = await response.json();
+                    if (result.status === 'queued' || result.downloadId) {
+                        video.downloadStatus = 'queued';
+                        video.downloadId = result.downloadId;
+                        totalQueued++;
+                    }
+                } catch (err) {
+                    errorCount++;
+                }
+
+                // Update queue display in real-time after each video
+                refreshQueue();
+                renderVideos();
+                updateChannelStats();
+
+                // 5-second delay between each queue request
+                if (qi < allToDownload.length - 1) {
+                    showAlert(`⬇️ Queuing ${qi + 1}/${totalCount}... (${ch.name})`, 'info', 4000);
+                    await new Promise(r => setTimeout(r, 5000));
+                }
+            }
 
             if (totalQueued > 0) {
                 showAlert(`✅ Queued ${totalQueued} remaining videos from all channels`, 'success');
                 addLogEntry(`✅ Queued ${totalQueued} remaining videos across all channels`, 'success');
             } else {
                 showAlert(`🎉 All available videos across channels are already downloaded or queued`, 'info');
+            }
+            if (errorCount > 0) {
+                showAlert(`⚠️ ${errorCount} videos failed to queue`, 'warning');
             }
         }
         
@@ -3954,12 +3995,17 @@
 
             let successCount = 0;
             let errorCount = 0;
+            const toDownload = videos.filter(v =>
+                v.downloadStatus !== 'completed' &&
+                v.downloadStatus !== 'downloading' &&
+                v.downloadStatus !== 'queued' &&
+                v.downloadStatus !== 'skipped'
+            );
 
-            for (let i = 0; i < videos.length; i++) {
-                const video = videos[i];
-                if (video.downloadStatus === 'completed' || video.downloadStatus === 'downloading' || video.downloadStatus === 'queued') {
-                    continue;
-                }
+            startPolling();
+
+            for (let i = 0; i < toDownload.length; i++) {
+                const video = toDownload[i];
 
                 try {
                     const response = await fetch(`${API_BASE}/api/download`, {
@@ -3992,10 +4038,17 @@
                 } catch (error) {
                     errorCount++;
                 }
-            }
 
-            renderVideos();
-            refreshQueue();
+                // Update queue display in real-time after each video
+                refreshQueue();
+                renderVideos();
+
+                // 5-second delay between each queue request
+                if (i < toDownload.length - 1) {
+                    btn.innerHTML = `<span class="spinner"></span> Queuing ${i + 1}/${toDownload.length}...`;
+                    await new Promise(r => setTimeout(r, 5000));
+                }
+            }
 
             btn.disabled = false;
             btn.textContent = '⬇️ Download All';
@@ -4007,8 +4060,6 @@
             if (errorCount > 0) {
                 showAlert(`⚠️ ${errorCount} videos failed to queue`, 'warning');
             }
-
-            startPolling();
         }
 
         function clearCompleted() {
@@ -4060,6 +4111,16 @@
                 }
 
                 renderQueue(activeItems);
+
+                // Update pending buffer count indicator
+                const bufferedStat = document.getElementById('bufferedStat');
+                const bufferedCount = document.getElementById('bufferedCount');
+                if (data.pendingBufferCount > 0) {
+                    bufferedStat.style.display = '';
+                    bufferedCount.textContent = data.pendingBufferCount;
+                } else {
+                    bufferedStat.style.display = 'none';
+                }
 
                 const allItems = [...activeItems, ...completedItems];
                 let statusChanged = false;
@@ -4138,10 +4199,12 @@
             container.innerHTML = queue.map((item, index) => {
                 const isWaitingItem = item.isWaiting || item.status === 'queued' || item.status === 'waiting';
                 const isActiveItem = item.isActive || item.status === 'downloading';
+                const channelTag = item.channelName ? `<span class="queue-channel-tag" title="${escapeHtml(item.channelName)}">${escapeHtml(item.channelName)}</span>` : '';
                 return `
                 <div class="queue-item ${isActiveItem ? 'downloading' : 'waiting'}" id="queue-${item.id || item.downloadId || index}">
                     <div class="queue-item-info">
                         <span class="queue-position">#${index + 1}</span>
+                        ${channelTag}
                         <span class="queue-item-title" title="${escapeHtml(item.title || 'Download')}">${escapeHtml(item.title || 'Download')}</span>
                     </div>
                     <div class="queue-item-status">
