@@ -448,13 +448,14 @@ function getChannelDownloadDir(channelName) {
     return channelDir;
 }
 
-// ⭐ NEW: Function to get the Single File download directory
+// ⭐ NEW: Function to get the Single-File download directory
+const SINGLE_FILE_DIR_NAME = 'Single-File';
 function getSingleFileDir() {
-    const singleDir = path.join(DOWNLOADS_DIR, 'Single File');
+    const singleDir = path.join(DOWNLOADS_DIR, SINGLE_FILE_DIR_NAME);
     
     if (!fs.existsSync(singleDir)) {
         fs.mkdirSync(singleDir, { recursive: true });
-        console.log('[Init] Created Single File directory:', singleDir);
+        console.log('[Init] Created Single-File directory:', singleDir);
     }
     
     return singleDir;
@@ -1663,7 +1664,7 @@ app.post('/api/download', async (req, res) => {
 // =============================================================================
 // POST /api/download-single
 // Accepts one or more YouTube video URLs (comma/newline separated)
-// Downloads to DOWNLOADS_DIR/Single File/
+// Downloads to DOWNLOADS_DIR/Single-File/
 // =============================================================================
 app.post('/api/download-single', async (req, res) => {
     console.log('\n' + '='.repeat(80));
@@ -1703,7 +1704,7 @@ app.post('/api/download-single', async (req, res) => {
                 url: videoUrl,
                 videoId: videoId,
                 channelId: null,
-                channelName: 'Single File',
+                channelName: 'Single-File',
                 title: null,
                 filename: outputFilename,
                 outputPath: outputPath,
@@ -1718,7 +1719,7 @@ app.post('/api/download-single', async (req, res) => {
                 hasFinalFilename: false
             });
 
-            downloadQueue.enqueue(downloadId, videoUrl, outputPath, `Single File: ${videoId}`);
+            downloadQueue.enqueue(downloadId, videoUrl, outputPath, `Single-File: ${videoId}`);
 
             results.push({
                 videoId,
@@ -1747,6 +1748,73 @@ app.post('/api/download-single', async (req, res) => {
         });
     }
 });
+
+// =============================================================================
+// SINGLE-FILE BROWSE ENDPOINT
+// =============================================================================
+// GET /api/single-file/files
+// Lists all files in the Single-File download directory
+// =============================================================================
+app.get('/api/single-file/files', (req, res) => {
+    console.log('\n[Single-File] GET /api/single-file/files');
+    
+    try {
+        const singleDir = getSingleFileDir();
+        const files = [];
+
+        if (fs.existsSync(singleDir)) {
+            const entries = fs.readdirSync(singleDir);
+            for (const entry of entries) {
+                const fullPath = path.join(singleDir, entry);
+                try {
+                    const stat = fs.statSync(fullPath);
+                    if (stat.isFile()) {
+                        files.push({
+                            name: entry,
+                            size: stat.size,
+                            modifiedAt: stat.mtime.toISOString(),
+                            sizeFormatted: formatFileSize(stat.size)
+                        });
+                    }
+                } catch (err) {
+                    console.warn(`[Single-File] Error reading ${entry}:`, err.message);
+                }
+            }
+
+            // Sort by modification time (newest first)
+            files.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+        }
+
+        const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+
+        console.log(`[Single-File] Found ${files.length} files, total size: ${formatFileSize(totalSize)}`);
+
+        res.json({
+            success: true,
+            directory: singleDir,
+            files: files,
+            count: files.length,
+            totalSize: totalSize,
+            totalSizeFormatted: formatFileSize(totalSize)
+        });
+
+    } catch (error) {
+        console.error('[Single-File] Error listing files:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to list files: ' + error.message
+        });
+    }
+});
+
+// Helper: Format file size
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const k = 1024;
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + units[i];
+}
 
 // GET /api/channels - Return list of saved channels (FRONTEND COMPATIBLE FORMAT!)
 app.get('/api/channels', (req, res) => {
