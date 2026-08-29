@@ -397,28 +397,27 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
 
 const PORT = process.env.PORT || 3000;
 
-// ⭐ FIXED: Default download folder - C:\Users\Jackle\Downloads for Windows
+// ⭐ Dynamic default download folder - auto-detects current OS user
 function getDefaultDownloadsDir() {
     // If environment variable is set, use it
     if (process.env.DOWNLOADS_DIR) {
         return process.env.DOWNLOADS_DIR;
     }
     
-    // Detect OS and set appropriate default
+    // Detect OS and set appropriate default using current user
     const os = process.platform;
     if (os === 'win32') {
-        // Windows: Use user's Downloads folder with YouTube-Downloader subfolder (default: Jackle)
-        const username = process.env.USERNAME || 'Jackle';
+        // Windows: C:\Users\<current_user>\Downloads\YouTube-Downloader
+        const username = process.env.USERNAME || process.env.USER || 'User';
         return `C:\\Users\\${username}\\Downloads\\YouTube-Downloader`;
     } else if (os === 'darwin') {
-        // macOS: Use Downloads folder with YouTube-Downloader subfolder
+        // macOS: ~/Downloads/YouTube-Downloader
         const home = process.env.HOME || '/Users/' + (process.env.USER || 'user');
         return path.join(home, 'Downloads', 'YouTube-Downloader');
     } else {
-        // Linux/Other: Use ~/Downloads/YouTube-Downloader or fallback to ./downloads
+        // Linux/Other: ~/Downloads/YouTube-Downloader or fallback to ./downloads
         const home = process.env.HOME || process.cwd();
         const downloadsPath = path.join(home, 'Downloads', 'YouTube-Downloader');
-        // If ~/Downloads/YouTube-Downloader exists, use it; otherwise use ./downloads
         try {
             if (fs.existsSync(downloadsPath)) {
                 return downloadsPath;
@@ -447,6 +446,18 @@ function getChannelDownloadDir(channelName) {
     }
     
     return channelDir;
+}
+
+// ⭐ NEW: Function to get the Single File download directory
+function getSingleFileDir() {
+    const singleDir = path.join(DOWNLOADS_DIR, 'Single File');
+    
+    if (!fs.existsSync(singleDir)) {
+        fs.mkdirSync(singleDir, { recursive: true });
+        console.log('[Init] Created Single File directory:', singleDir);
+    }
+    
+    return singleDir;
 }
 
 // Ensure downloads directory exists
@@ -1647,6 +1658,96 @@ app.post('/api/download', async (req, res) => {
     }
 });
 
+// =============================================================================
+// SINGLE FILE DOWNLOAD ENDPOINT
+// =============================================================================
+// POST /api/download-single
+// Accepts one or more YouTube video URLs (comma/newline separated)
+// Downloads to DOWNLOADS_DIR/Single File/
+// =============================================================================
+app.post('/api/download-single', async (req, res) => {
+    console.log('\n' + '='.repeat(80));
+    console.log('⬇️ [Single File] POST /api/download-single');
+    console.log('='.repeat(80));
+
+    try {
+        const { urls } = req.body;
+
+        if (!urls || !urls.trim()) {
+            return res.status(400).json({ success: false, error: 'Video URLs required' });
+        }
+
+        // Split by commas or newlines and clean up
+        const urlList = urls.split(/[\n,]+/).map(u => u.trim()).filter(u => u.length > 0);
+
+        if (urlList.length === 0) {
+            return res.status(400).json({ success: false, error: 'No valid URLs provided' });
+        }
+
+        const outputDir = getSingleFileDir();
+        const results = [];
+
+        for (const videoUrl of urlList) {
+            const downloadId = uuidv4();
+
+            // Extract video ID from URL for a reasonable filename
+            const vidMatch = videoUrl.match(/(?:v=|\/v\/|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+            const videoId = vidMatch ? vidMatch[1] : downloadId.substring(0, 11);
+            const outputFilename = `video_${videoId}.mp4`;
+            const outputPath = path.join(outputDir, outputFilename);
+
+            console.log(`[Single File] Queuing: ${videoUrl} -> ${outputPath}`);
+
+            const download = downloadManager.add({
+                id: downloadId,
+                url: videoUrl,
+                videoId: videoId,
+                channelId: null,
+                channelName: 'Single File',
+                title: null,
+                filename: outputFilename,
+                outputPath: outputPath,
+                format: 'best',
+                quality: 'auto',
+                status: 'queued',
+                progress: 0,
+                startTime: null,
+                endTime: null,
+                createdAt: new Date().toISOString(),
+                needsRename: true,
+                hasFinalFilename: false
+            });
+
+            downloadQueue.enqueue(downloadId, videoUrl, outputPath, `Single File: ${videoId}`);
+
+            results.push({
+                videoId,
+                url: videoUrl,
+                jobId: downloadId,
+                status: 'queued'
+            });
+        }
+
+        res.status(201).json({
+            success: true,
+            message: `Queued ${results.length} video(s) for download`,
+            count: results.length,
+            downloads: results,
+            outputDir: outputDir
+        });
+
+        console.log(`[Single File] ✅ Queued ${results.length} video(s) to ${outputDir}`);
+        console.log('='.repeat(80) + '\n');
+
+    } catch (error) {
+        console.error('[Single File] Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to queue download: ' + error.message
+        });
+    }
+});
+
 // GET /api/channels - Return list of saved channels (FRONTEND COMPATIBLE FORMAT!)
 app.get('/api/channels', (req, res) => {
     console.log('\n[Channels] GET /api/channels requested');
@@ -2633,9 +2734,11 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
             console.log(`[Execute Download] 🔊 MERGE MODE: combining video (${formatInfo.formatId}) + bestaudio`);
         }
 
+        // ⭐ FIX: Quote the output path to handle spaces in directory names (e.g. "Single File")
+        const quotedTempPath = `"${tempPath}"`;
         const args = [
             '-f', formatSelector,
-            '-o', tempPath,  // ⭐ KEY: Use SHORT path, not long one!
+            '-o', quotedTempPath,  // ⭐ KEY: Quoted SHORT path handles spaces!
             '--no-playlist',
             '--embed-chapters',
             '--embed-metadata',
