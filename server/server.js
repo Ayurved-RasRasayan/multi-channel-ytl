@@ -397,28 +397,27 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
 
 const PORT = process.env.PORT || 3000;
 
-// ⭐ FIXED: Default download folder - C:\Users\Jackle\Downloads for Windows
+// ⭐ Dynamic default download folder - auto-detects current OS user
 function getDefaultDownloadsDir() {
     // If environment variable is set, use it
     if (process.env.DOWNLOADS_DIR) {
         return process.env.DOWNLOADS_DIR;
     }
     
-    // Detect OS and set appropriate default
+    // Detect OS and set appropriate default using current user
     const os = process.platform;
     if (os === 'win32') {
-        // Windows: Use user's Downloads folder with YouTube-Downloader subfolder (default: Jackle)
-        const username = process.env.USERNAME || 'Jackle';
+        // Windows: C:\Users\<current_user>\Downloads\YouTube-Downloader
+        const username = process.env.USERNAME || process.env.USER || 'User';
         return `C:\\Users\\${username}\\Downloads\\YouTube-Downloader`;
     } else if (os === 'darwin') {
-        // macOS: Use Downloads folder with YouTube-Downloader subfolder
+        // macOS: ~/Downloads/YouTube-Downloader
         const home = process.env.HOME || '/Users/' + (process.env.USER || 'user');
         return path.join(home, 'Downloads', 'YouTube-Downloader');
     } else {
-        // Linux/Other: Use ~/Downloads/YouTube-Downloader or fallback to ./downloads
+        // Linux/Other: ~/Downloads/YouTube-Downloader or fallback to ./downloads
         const home = process.env.HOME || process.cwd();
         const downloadsPath = path.join(home, 'Downloads', 'YouTube-Downloader');
-        // If ~/Downloads/YouTube-Downloader exists, use it; otherwise use ./downloads
         try {
             if (fs.existsSync(downloadsPath)) {
                 return downloadsPath;
@@ -447,6 +446,19 @@ function getChannelDownloadDir(channelName) {
     }
     
     return channelDir;
+}
+
+// ⭐ NEW: Function to get the Single-File download directory
+const SINGLE_FILE_DIR_NAME = 'Single-File';
+function getSingleFileDir() {
+    const singleDir = path.join(DOWNLOADS_DIR, SINGLE_FILE_DIR_NAME);
+    
+    if (!fs.existsSync(singleDir)) {
+        fs.mkdirSync(singleDir, { recursive: true });
+        console.log('[Init] Created Single-File directory:', singleDir);
+    }
+    
+    return singleDir;
 }
 
 // Ensure downloads directory exists
@@ -1590,6 +1602,7 @@ app.post('/api/download', async (req, res) => {
             url: videoUrl,
             videoId: videoId,
             channelId: channelId,
+            channelName: channelName || null,
             title: title || null,
             filename: outputFilename,
             outputPath: outputPath,
@@ -1645,6 +1658,163 @@ app.post('/api/download', async (req, res) => {
         });
     }
 });
+
+// =============================================================================
+// SINGLE FILE DOWNLOAD ENDPOINT
+// =============================================================================
+// POST /api/download-single
+// Accepts one or more YouTube video URLs (comma/newline separated)
+// Downloads to DOWNLOADS_DIR/Single-File/
+// =============================================================================
+app.post('/api/download-single', async (req, res) => {
+    console.log('\n' + '='.repeat(80));
+    console.log('⬇️ [Single File] POST /api/download-single');
+    console.log('='.repeat(80));
+
+    try {
+        const { urls } = req.body;
+
+        if (!urls || !urls.trim()) {
+            return res.status(400).json({ success: false, error: 'Video URLs required' });
+        }
+
+        // Split by commas or newlines and clean up
+        const urlList = urls.split(/[\n,]+/).map(u => u.trim()).filter(u => u.length > 0);
+
+        if (urlList.length === 0) {
+            return res.status(400).json({ success: false, error: 'No valid URLs provided' });
+        }
+
+        const outputDir = getSingleFileDir();
+        const results = [];
+
+        for (const videoUrl of urlList) {
+            const downloadId = uuidv4();
+
+            // Extract video ID from URL for a reasonable filename
+            const vidMatch = videoUrl.match(/(?:v=|\/v\/|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+            const videoId = vidMatch ? vidMatch[1] : downloadId.substring(0, 11);
+            const outputFilename = `video_${videoId}.mp4`;
+            const outputPath = path.join(outputDir, outputFilename);
+
+            console.log(`[Single File] Queuing: ${videoUrl} -> ${outputPath}`);
+
+            const download = downloadManager.add({
+                id: downloadId,
+                url: videoUrl,
+                videoId: videoId,
+                channelId: null,
+                channelName: 'Single-File',
+                title: null,
+                filename: outputFilename,
+                outputPath: outputPath,
+                format: 'best',
+                quality: 'auto',
+                status: 'queued',
+                progress: 0,
+                startTime: null,
+                endTime: null,
+                createdAt: new Date().toISOString(),
+                needsRename: true,
+                hasFinalFilename: false
+            });
+
+            downloadQueue.enqueue(downloadId, videoUrl, outputPath, `Single-File: ${videoId}`);
+
+            results.push({
+                videoId,
+                url: videoUrl,
+                jobId: downloadId,
+                status: 'queued'
+            });
+        }
+
+        res.status(201).json({
+            success: true,
+            message: `Queued ${results.length} video(s) for download`,
+            count: results.length,
+            downloads: results,
+            outputDir: outputDir
+        });
+
+        console.log(`[Single File] ✅ Queued ${results.length} video(s) to ${outputDir}`);
+        console.log('='.repeat(80) + '\n');
+
+    } catch (error) {
+        console.error('[Single File] Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to queue download: ' + error.message
+        });
+    }
+});
+
+// =============================================================================
+// SINGLE-FILE BROWSE ENDPOINT
+// =============================================================================
+// GET /api/single-file/files
+// Lists all files in the Single-File download directory
+// =============================================================================
+app.get('/api/single-file/files', (req, res) => {
+    console.log('\n[Single-File] GET /api/single-file/files');
+    
+    try {
+        const singleDir = getSingleFileDir();
+        const files = [];
+
+        if (fs.existsSync(singleDir)) {
+            const entries = fs.readdirSync(singleDir);
+            for (const entry of entries) {
+                const fullPath = path.join(singleDir, entry);
+                try {
+                    const stat = fs.statSync(fullPath);
+                    if (stat.isFile()) {
+                        files.push({
+                            name: entry,
+                            size: stat.size,
+                            modifiedAt: stat.mtime.toISOString(),
+                            sizeFormatted: formatFileSize(stat.size)
+                        });
+                    }
+                } catch (err) {
+                    console.warn(`[Single-File] Error reading ${entry}:`, err.message);
+                }
+            }
+
+            // Sort by modification time (newest first)
+            files.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+        }
+
+        const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+
+        console.log(`[Single-File] Found ${files.length} files, total size: ${formatFileSize(totalSize)}`);
+
+        res.json({
+            success: true,
+            directory: singleDir,
+            files: files,
+            count: files.length,
+            totalSize: totalSize,
+            totalSizeFormatted: formatFileSize(totalSize)
+        });
+
+    } catch (error) {
+        console.error('[Single-File] Error listing files:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to list files: ' + error.message
+        });
+    }
+});
+
+// Helper: Format file size
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const k = 1024;
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + units[i];
+}
 
 // GET /api/channels - Return list of saved channels (FRONTEND COMPATIBLE FORMAT!)
 app.get('/api/channels', (req, res) => {
@@ -2172,6 +2342,7 @@ app.get('/api/download-queue', (req, res) => {
             videoId: fullDl.videoId,
             title: d.title || fullDl.title,
             filename: fullDl.filename,
+            channelName: fullDl.channelName || null,
             status: 'downloading',
             progress: fullDl.progress || 0,
             speed: fullDl.speed || null,
@@ -2195,6 +2366,7 @@ app.get('/api/download-queue', (req, res) => {
             videoId: fullDl.videoId,
             title: job.videoTitle || fullDl.title,
             filename: fullDl.filename,
+            channelName: fullDl.channelName || null,
             status: 'queued',
             progress: 0,
             url: fullDl.url
@@ -2224,6 +2396,7 @@ app.get('/api/download-queue', (req, res) => {
             active: activeAndQueued,
             completed: completed
         },
+        pendingBufferCount: downloadQueue.pendingBuffer.length,
         timestamp: new Date().toISOString()
     });
 });
@@ -2246,22 +2419,22 @@ app.delete('/api/download-queue', (req, res) => {
 /**
  * Global download queue system
  * - maxConcurrent: Maximum downloads running at once (2)
- * - maxVisibleQueue: Maximum items visible in active queue (50)
- * - replenishThreshold: When active visible queue <= 10 items, replenish to 50 from pendingBuffer
+ * - maxVisibleQueue: Maximum items visible in active queue (25)
+ * - replenishThreshold: When active visible queue <= 5 items, replenish to 25 from pendingBuffer
  * - activeJobs: Array of CURRENTLY RUNNING job objects (max 2)
- * - queue: Array of visible download jobs waiting for a slot (max 50)
+ * - queue: Array of visible download jobs waiting for a slot (max 25)
  * - pendingBuffer: Array of buffered jobs saved in database/server pool
  */
 const downloadQueue = {
     maxConcurrent: 2,                    // ⭐ MAX 2 downloads at a time
-    maxVisibleQueue: 50,                  // ⭐ MAX 50 visible queued items
-    replenishThreshold: 10,               // ⭐ Replenish when visible queue <= 10
+    maxVisibleQueue: 25,                  // ⭐ MAX 25 visible queued items
+    replenishThreshold: 5,                // ⭐ Replenish when visible queue <= 5
     activeJobs: [],                      // Track ACTUALLY running jobs
-    queue: [],                           // Visible waiting jobs (max 50)
+    queue: [],                           // Visible waiting jobs (max 25)
     pendingBuffer: [],                   // Buffered pending jobs saved in server state
     
     /**
-     * Replenish visible queue from pendingBuffer when total visible items drop to <= 10
+     * Replenish visible queue from pendingBuffer when total visible items drop to <= 5
      */
     replenishQueue() {
         if (this.pendingBuffer.length === 0) return;
@@ -2284,7 +2457,7 @@ const downloadQueue = {
     /**
      * Add a download job to the queue
      * If < 2 active, start immediately
-     * Otherwise, wait in queue (or pendingBuffer if queue >= 50)
+     * Otherwise, wait in queue (or pendingBuffer if queue >= 25)
      */
     enqueue(downloadId, videoUrl, outputPath, videoTitle) {
         const job = { 
@@ -2361,6 +2534,7 @@ const downloadQueue = {
     /**
      * Called when a download finishes (success or fail)
      * Frees a slot and starts next queued job if any
+     * ⭐ 5-second delay between downloads to avoid rate limiting
      */
     onJobComplete(completedJob) {
         if (completedJob) {
@@ -2379,29 +2553,35 @@ const downloadQueue = {
         console.log(`\n[Download Queue] 📊 Status: Active=${this.activeJobs.length}/${this.maxConcurrent} | Visible Queue=${this.queue.length} | Buffered=${this.pendingBuffer.length}`);
         
         if (this.queue.length > 0 && this.activeJobs.length < this.maxConcurrent) {
-            const nextJob = this.queue.shift();
-            
-            if (!nextJob) {
-                console.log('[Download Queue] ⚠️ Next job is null, skipping');
-                return;
-            }
-            
-            const alreadyRunning = this.activeJobs.find(j => j.downloadId === nextJob.downloadId);
-            if (alreadyRunning) {
-                console.log(`[Download Queue] ⚠️ Next job already running, skipping: ${nextJob.videoTitle?.substring(0, 30)}...`);
-                return;
-            }
-            
-            this.activeJobs.push(nextJob);
+            console.log(`[Download Queue] ⏳ Waiting 5 seconds before starting next download...`);
+            setTimeout(() => {
+                // Re-check after delay (state may have changed)
+                if (this.queue.length === 0 || this.activeJobs.length >= this.maxConcurrent) return;
 
-            console.log(`[Download Queue] ▶️ Reserved slot and starting next in queue: ${nextJob.videoTitle?.substring(0, 30)}...`);
-            console.log(`[Download Queue] Remaining in queue: ${this.queue.length} (buffered: ${this.pendingBuffer.length})`);
-            
-            const resIdx = this.activeJobs.findIndex(j => j.downloadId === nextJob.downloadId);
-            if (resIdx !== -1) {
-                this.activeJobs.splice(resIdx, 1);
-            }
-            this.executeJob(nextJob);
+                const nextJob = this.queue.shift();
+                
+                if (!nextJob) {
+                    console.log('[Download Queue] ⚠️ Next job is null, skipping');
+                    return;
+                }
+                
+                const alreadyRunning = this.activeJobs.find(j => j.downloadId === nextJob.downloadId);
+                if (alreadyRunning) {
+                    console.log(`[Download Queue] ⚠️ Next job already running, skipping: ${nextJob.videoTitle?.substring(0, 30)}...`);
+                    return;
+                }
+                
+                this.activeJobs.push(nextJob);
+
+                console.log(`[Download Queue] ▶️ Reserved slot and starting next in queue: ${nextJob.videoTitle?.substring(0, 30)}...`);
+                console.log(`[Download Queue] Remaining in queue: ${this.queue.length} (buffered: ${this.pendingBuffer.length})`);
+                
+                const resIdx = this.activeJobs.findIndex(j => j.downloadId === nextJob.downloadId);
+                if (resIdx !== -1) {
+                    this.activeJobs.splice(resIdx, 1);
+                }
+                this.executeJob(nextJob);
+            }, 5000);
             
         } else if (this.queue.length === 0 && this.pendingBuffer.length === 0 && this.activeJobs.length === 0) {
             console.log('[Download Queue] 🎉 All downloads complete! Queue empty.');
@@ -2608,9 +2788,25 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
         console.log(`[Execute Download] Output dir: ${outputDir}`);
 
         // Build arguments - use SHORT temp path to avoid truncation!
+        // ⭐⭐⭐ BUG FIX #9: Combine video+audio format when merge is needed ⭐⭐⭐
+        // PROBLEM: When needsMerge=true, formatInfo.formatId is video-only (e.g. "247"),
+        // so yt-dlp downloads ONLY the video stream → no audio in output.
+        // SOLUTION: Combine video+audio IDs as "247+140" so yt-dlp fetches both streams.
+        let formatSelector = formatInfo.formatId;
+        if (formatInfo.needsMerge && formatInfo.audioFormatId) {
+            formatSelector = `${formatInfo.formatId}+${formatInfo.audioFormatId}`;
+            console.log(`[Execute Download] 🔊 MERGE MODE: combining video (${formatInfo.formatId}) + audio (${formatInfo.audioFormatId})`);
+        } else if (formatInfo.needsMerge && !formatInfo.audioFormatId) {
+            // No specific audio format found, let yt-dlp pick best audio automatically
+            formatSelector = `${formatInfo.formatId}+bestaudio`;
+            console.log(`[Execute Download] 🔊 MERGE MODE: combining video (${formatInfo.formatId}) + bestaudio`);
+        }
+
+        // ⭐ FIX: Quote the output path to handle spaces in directory names (e.g. "Single File")
+        const quotedTempPath = `"${tempPath}"`;
         const args = [
-            '-f', formatInfo.formatId,
-            '-o', tempPath,  // ⭐ KEY: Use SHORT path, not long one!
+            '-f', formatSelector,
+            '-o', quotedTempPath,  // ⭐ KEY: Quoted SHORT path handles spaces!
             '--no-playlist',
             '--embed-chapters',
             '--embed-metadata',
@@ -3102,10 +3298,19 @@ function parseFormatsFromText(text) {
     }
     
     // Mark formats that need merging (video without audio or vice versa)
+    // ⭐⭐⭐ BUG FIX #10: Fixed 'line' out-of-scope ReferenceError ⭐⭐⭐
+    // PROBLEM: The old code used 'line' (from the for loop above) inside forEach,
+    // but 'line' was const-scoped to the for loop and inaccessible here → ReferenceError.
+    // SOLUTION: Determine needsMerge from the parsed fields directly.
     formats.forEach(f => {
-        if (!f.isAudioOnly && f.acodec !== 'unknown' && f.vcodec !== null) {
-            // Has both, check if they're separate
-            f.needsMerge = line.includes('video only');
+        if (f.isAudioOnly) {
+            f.needsMerge = false; // Audio-only formats don't need merge themselves
+        } else if (!f.acodec || f.acodec === 'unknown' || !f.vcodec || f.vcodec === 'unknown') {
+            // Video format with no audio codec info → video-only DASH stream, needs merge
+            f.needsMerge = true;
+        } else {
+            // Has both video and audio codecs → combined format, no merge needed
+            f.needsMerge = false;
         }
     });
     

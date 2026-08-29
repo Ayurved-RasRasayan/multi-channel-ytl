@@ -68,7 +68,7 @@
 
         /* ==================== MULTI-CHANNEL LAYOUT ==================== */
         
-        /* Top Section - Load Channel + Settings side by side (Compact Height) */
+        /* Top Section - Load Channel + Settings side by side */
         .top-section {
             display: grid;
             grid-template-columns: 1fr 380px;
@@ -77,45 +77,187 @@
         }
         
         .top-section .card {
-            padding: 8px 12px;
+            padding: 12px 16px;
             margin-bottom: 0;
             box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
         }
 
         .top-section .card-header {
-            margin-bottom: 6px;
-            padding-bottom: 4px;
+            margin-bottom: 10px;
+            padding-bottom: 6px;
+            border-bottom: 2px solid #e5e7eb;
         }
 
         .top-section .card-title {
             font-size: 0.95em;
+            font-weight: 700;
+            color: #111827;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
-        .top-section .input-group {
+        /* Blue gradient icon for the card title */
+        .load-section-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 7px;
+            background: linear-gradient(135deg, #818cf8 0%, #6366f1 50%, #4f46e5 100%);
+            color: white;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        .top-section .input-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+
+        .top-section .input-row:last-child {
             margin-bottom: 0;
-            gap: 6px;
         }
 
-        .top-section input[type="text"] {
-            padding: 5px 8px;
+        .top-section .input-row input[type="text"] {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 13px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #ffffff;
+            color: #111827;
+            transition: border-color 0.2s;
+        }
+
+        .top-section .input-row input[type="text"]::placeholder {
+            color: #9ca3af;
+        }
+
+        .top-section .input-row input[type="text"]:focus {
+            outline: none;
+            border-color: #6366f1;
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+        }
+
+        /* Purple/indigo action buttons matching the reference */
+        .btn-load-action {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 13px;
+            color: white;
+            background: linear-gradient(135deg, #818cf8 0%, #6366f1 50%, #4f46e5 100%);
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .btn-load-action:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-load-action:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        /* Settings card styling to match reference */
+        .settings-card {
+            background: #f3f4f6 !important;
+            border: 1px solid #e5e7eb;
+        }
+
+        .settings-card .card-title {
+            font-weight: 700;
+            color: #111827;
+        }
+
+        .btn-settings-toggle {
+            background: #4b5563;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 5px 12px;
             font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.2s;
         }
 
-        .top-section button {
-            padding: 5px 10px;
-            font-size: 12px;
+        .btn-settings-toggle:hover {
+            background: #374151;
         }
 
-        .top-section .setting-group {
-            margin-bottom: 0;
+        .setting-group {
             padding: 0;
             box-shadow: none;
             background: transparent;
         }
 
-        .top-section .setting-label {
+        .setting-label {
             margin-bottom: 4px;
-            font-size: 11px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .setting-input-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .setting-input {
+            flex: 1;
+            padding: 7px 10px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 12px;
+            background: #ffffff;
+            color: #111827;
+        }
+
+        .setting-input:focus {
+            outline: none;
+            border-color: #6366f1;
+        }
+
+        .btn-save-setting {
+            padding: 7px 14px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 12px;
+            color: white;
+            background: linear-gradient(135deg, #818cf8 0%, #6366f1 50%, #4f46e5 100%);
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .btn-save-setting:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
         }
 
         @media (max-width: 1100px) {
@@ -428,7 +570,108 @@
             color: #3949ab;
             font-weight: 700;
         }
-        
+
+        /* ⭐ Single-File container - special pinned entry in channel list */
+        .channel-item.single-file-container {
+            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+            border-color: #66bb6a;
+            margin-bottom: 10px;
+            border-width: 2px;
+        }
+        .channel-item.single-file-container:hover {
+            background: linear-gradient(135deg, #c8e6c9 0%, #a5d6a7 100%);
+            border-color: #43a047;
+            transform: translateX(3px);
+            box-shadow: 0 3px 10px rgba(102, 187, 106, 0.2);
+        }
+        .channel-item.single-file-container::before {
+            background: #43a047;
+        }
+        .channel-item.single-file-container.active {
+            background: linear-gradient(135deg, #c8e6c9 0%, #81c784 100%);
+            border-color: #2e7d32;
+            box-shadow: 0 4px 15px rgba(102, 187, 106, 0.3);
+        }
+        .channel-item.single-file-container.active::before {
+            background: linear-gradient(180deg, #43a047 0%, #2e7d32 100%);
+        }
+        .channel-item.single-file-container .channel-item-name {
+            color: #2e7d32;
+            font-weight: 600;
+        }
+        .channel-item.single-file-container .channel-item-icon {
+            background: linear-gradient(135deg, #43a047 0%, #2e7d32 100%);
+            font-size: 16px;
+        }
+
+        /* Single-File files list in content area */
+        .single-file-list {
+            padding: 10px;
+        }
+        .single-file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            background: #f8faf8;
+            border-radius: 10px;
+            border: 1px solid #c8e6c9;
+            transition: all 0.2s;
+        }
+        .single-file-item:hover {
+            background: #e8f5e9;
+            border-color: #66bb6a;
+            box-shadow: 0 2px 8px rgba(102, 187, 106, 0.15);
+        }
+        .single-file-item-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+            flex: 1;
+        }
+        .single-file-item-name {
+            font-size: 0.9em;
+            font-weight: 500;
+            color: #333;
+            word-break: break-all;
+        }
+        .single-file-item-meta {
+            font-size: 0.78em;
+            color: #888;
+            display: flex;
+            gap: 12px;
+        }
+        .single-file-empty {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+        .single-file-empty-icon {
+            font-size: 3em;
+            margin-bottom: 10px;
+        }
+        .single-file-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+            border-radius: 10px;
+            border: 1px solid #a5d6a7;
+        }
+        .single-file-header-title {
+            font-size: 1em;
+            font-weight: 600;
+            color: #2e7d32;
+        }
+        .single-file-header-stats {
+            font-size: 0.82em;
+            color: #558b2f;
+        }
+
         /* Channel Item Icon */
         .channel-item-icon {
             width: 36px;
@@ -1447,6 +1690,24 @@
             color: #f57c00;
         }
         
+        .queue-stat.buffered-count {
+            color: #7b1fa2;
+        }
+        
+        .queue-channel-tag {
+            font-size: 0.7em;
+            color: #1565c0;
+            background: #e3f2fd;
+            border: 1px solid #90caf9;
+            padding: 1px 6px;
+            border-radius: 8px;
+            white-space: nowrap;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex-shrink: 0;
+        }
+        
         .queue-item {
             display: flex;
             justify-content: space-between;
@@ -1704,29 +1965,6 @@
             color: #333;
             margin-bottom: 8px;
             font-size: 12px;
-        }
-        
-        .setting-input-group {
-            display: flex;
-            gap: 6px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-        
-        .setting-input {
-            flex: 1;
-            min-width: 180px;
-            padding: 8px 10px;
-            border: 2px solid #ddd;
-            border-radius: 6px;
-            font-size: 12px;
-            font-family: 'Courier New', monospace;
-            transition: border-color 0.3s;
-        }
-        
-        .setting-input:focus {
-            outline: none;
-            border-color: #667eea;
         }
         
         .setting-info {
@@ -2182,20 +2420,24 @@
         <!-- Alert Messages -->
         <div id="alert" class="alert"></div>
 
-        <!-- TOP SECTION: Load Channel (Left) + Settings (Right) -->
+        <!-- TOP SECTION: Load Channel or Single-File (Left) + Settings (Right) -->
         <div class="top-section">
-            <!-- Left: Load Channel Input -->
+            <!-- Left: Load Channel or Single-File -->
             <div class="card">
                 <div class="card-header">
-                    <h2 class="card-title">📺 Load Channel</h2>
-                    <span id="liveIndicator" class="live-indicator" style="display: none;">
-                        <span class="live-dot"></span> LIVE
-                    </span>
+                    <h2 class="card-title">
+                        <span class="load-section-icon">⬇</span>
+                        Load Channel or Single-File:
+                    </h2>
                 </div>
                 
-                <div class="input-group">
+                <div class="input-row">
                     <input type="text" id="channelInput" placeholder="Enter channel URLs or @usernames (comma or newline separated)">
-                    <button class="btn-primary" onclick="loadChannel()" id="loadBtn">Load Channel</button>
+                    <button class="btn-load-action" onclick="loadChannel()" id="loadBtn">Load Channel</button>
+                </div>
+                <div class="input-row">
+                    <input type="text" id="singleFileInput" placeholder="Enter YouTube video URLs (comma separated)">
+                    <button class="btn-load-action" onclick="loadSingleFile()" id="loadSingleBtn">Load Single-File</button>
                 </div>
             </div>
 
@@ -2203,7 +2445,7 @@
             <div class="card settings-card">
                 <div class="card-header">
                     <h2 class="card-title">⚙️ Settings</h2>
-                    <button class="btn-secondary btn-small" onclick="toggleSettings()">
+                    <button class="btn-settings-toggle" onclick="toggleSettings()">
                         <span id="settingsToggleIcon">▼</span> Show/Hide
                     </button>
                 </div>
@@ -2220,7 +2462,7 @@
                                    value=""
                                    placeholder="C:\Users\Username\Downloads\YouTube-Downloader"
                                    class="setting-input">
-                            <button class="btn-primary btn-small" onclick="saveDownloadFolder()" title="Save setting">
+                            <button class="btn-save-setting" onclick="saveDownloadFolder()" title="Save setting">
                                 💾 Save
                             </button>
                         </div>
@@ -2411,6 +2653,7 @@
                         <div class="queue-stats" id="queueStats">
                             <span class="queue-stat active-count">🟢 Active: <strong id="activeCount">0</strong>/2</span>
                             <span class="queue-stat waiting-count">⏳ Waiting: <strong id="waitingCount">0</strong></span>
+                            <span class="queue-stat buffered-count" id="bufferedStat" style="display:none;">📦 Buffered: <strong id="bufferedCount">0</strong></span>
                         </div>
                         <div style="display: flex; gap: 6px;">
                             <button class="btn-secondary btn-small" onclick="refreshQueue()">🔄</button>
@@ -2642,6 +2885,10 @@
             }
         }
 
+        // Track if Single-File container is currently active
+        let singleFileActive = false;
+        let singleFileCount = 0;
+
         function renderChannelList() {
             const container = document.getElementById('channelList');
             const emptyState = document.getElementById('channelListEmpty');
@@ -2677,19 +2924,34 @@
                 autoFitBadgeText(totalQueueEl.closest('.badge-text-fit'));
             }
 
-            // Show/hide empty state
-            if (channels.length === 0) {
+            // Remove any existing channel items (but keep empty state)
+            const existingItems = container.querySelectorAll('.channel-item');
+            existingItems.forEach(item => item.remove());
+
+            // Show/hide empty state (only for channels, not Single-File)
+            if (channels.length === 0 && !singleFileActive) {
                 emptyState.style.display = 'block';
-                // Remove any channel items
-                const items = container.querySelectorAll('.channel-item');
-                items.forEach(item => item.remove());
-                return;
+            } else {
+                emptyState.style.display = 'none';
             }
-            
-            emptyState.style.display = 'none';
-            
-            // Build channel items HTML
+
+            // ⭐ Prepend the Single-File container (always visible, no badge, no delete)
             let html = '';
+            html += `
+                <div class="channel-item single-file-container ${singleFileActive ? 'active' : ''}" 
+                     data-channel-id="__single_file__" 
+                     onclick="selectSingleFile()">
+                    <div class="channel-item-icon">📁</div>
+                    <div class="channel-item-content">
+                        <div class="channel-item-name">Single-File</div>
+                        <div class="channel-item-meta" style="margin-top: 2px;">
+                            <span class="channel-item-videos">${singleFileCount} file(s)</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Build channel items HTML for regular channels
             channels.forEach(channel => {
                 const isActive = channel.id === activeChannelId;
                 const channelVideos = channel.videos || (channel.data && channel.data.videos) || [];
@@ -2720,13 +2982,124 @@
                 `;
             });
             
-            // Keep empty state element, replace channel items
-            const existingItems = container.querySelectorAll('.channel-item');
-            existingItems.forEach(item => item.remove());
-            
             container.insertAdjacentHTML('beforeend', html);
         }
         
+        // ==================== SINGLE-FILE CONTAINER ====================
+
+        /**
+         * Select the Single-File container and show its files
+         */
+        async function selectSingleFile() {
+            console.log('[Single-File] Switching to Single-File container');
+
+            // Deactivate any active channel
+            activeChannelId = null;
+            currentChannel = null;
+            videos = [];
+            singleFileActive = true;
+
+            // Update channel list visual
+            renderChannelList();
+
+            // Show videos card with Single-File content
+            const videosCard = document.getElementById('videosCard');
+            videosCard.style.display = 'block';
+
+            // Update header to show Single-File
+            document.getElementById('currentChannelTitle').textContent = 'Single-File';
+
+            // Hide channel-specific controls
+            const selectAllRow = document.getElementById('selectAllRow');
+            if (selectAllRow) selectAllRow.style.display = 'none';
+            const filterRow = document.getElementById('filterRow');
+            if (filterRow) filterRow.style.display = 'none';
+            const actionButtons = document.getElementById('actionButtons');
+            if (actionButtons) actionButtons.style.display = 'none';
+
+            // Show the Single-File file list
+            await loadSingleFileList();
+
+            // Close mobile sidebar
+            closeMobileSidebar();
+
+            addLogEntry('📂 Switched to Single-File container', 'info');
+        }
+
+        /**
+         * Load and display files from the Single-File directory
+         */
+        async function loadSingleFileList() {
+            const videoListContainer = document.getElementById('videoList');
+            if (!videoListContainer) return;
+
+            // Show loading state
+            videoListContainer.innerHTML = '<div style="text-align:center; padding: 40px; color: #999;">Loading files...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/single-file/files`);
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Failed to load files');
+                }
+
+                // Update the file count in the sidebar
+                singleFileCount = data.count;
+                renderChannelList();
+
+                if (data.files.length === 0) {
+                    videoListContainer.innerHTML = `
+                        <div class="single-file-empty">
+                            <div class="single-file-empty-icon">📁</div>
+                            <div style="font-size: 1.1em; margin-bottom: 6px;">No files yet</div>
+                            <div style="font-size: 0.85em;">Use "Load Single-File" above to download videos here</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Render file list
+                let html = `
+                    <div class="single-file-header">
+                        <div class="single-file-header-title">📁 Single-File Downloads</div>
+                        <div class="single-file-header-stats">${data.count} file(s) · ${data.totalSizeFormatted}</div>
+                    </div>
+                    <div class="single-file-list">
+                `;
+
+                data.files.forEach(file => {
+                    const modifiedDate = new Date(file.modifiedAt).toLocaleString();
+                    html += `
+                        <div class="single-file-item">
+                            <div class="single-file-item-info">
+                                <div class="single-file-item-name">${escapeHtml(file.name)}</div>
+                                <div class="single-file-item-meta">
+                                    <span>📦 ${file.sizeFormatted}</span>
+                                    <span>📅 ${modifiedDate}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += '</div>';
+                videoListContainer.innerHTML = html;
+
+                addLogEntry(`📁 Single-File: ${data.count} file(s), ${data.totalSizeFormatted}`, 'info');
+
+            } catch (error) {
+                console.error('[Single-File] Error loading files:', error);
+                videoListContainer.innerHTML = `
+                    <div class="single-file-empty">
+                        <div class="single-file-empty-icon">❌</div>
+                        <div style="font-size: 1.1em; margin-bottom: 6px;">Error loading files</div>
+                        <div style="font-size: 0.85em;">${escapeHtml(error.message)}</div>
+                    </div>
+                `;
+            }
+        }
+
         /**
          * Select a channel and load its videos
          * @param {string} channelId - ID of the channel to select
@@ -2734,6 +3107,17 @@
         async function selectChannel(channelId) {
             console.log(`[Channel] Switching to channel: ${channelId}`);
             
+            // ⭐ Deactivate Single-File container when selecting a real channel
+            singleFileActive = false;
+
+            // Show channel-specific controls
+            const selectAllRow = document.getElementById('selectAllRow');
+            if (selectAllRow) selectAllRow.style.display = '';
+            const filterRow = document.getElementById('filterRow');
+            if (filterRow) filterRow.style.display = '';
+            const actionButtons = document.getElementById('actionButtons');
+            if (actionButtons) actionButtons.style.display = '';
+
             // Find channel in our list
             const channel = channels.find(ch => ch.id === channelId);
             if (!channel) {
@@ -2882,9 +3266,13 @@
             showAlert(`⬇️ Queuing remaining videos across all channels...`, 'info', 5000);
             addLogEntry(`⬇️ Starting download for all unsynced/remaining videos in all channels`, 'info');
             
+            startPolling();
+
             let totalQueued = 0;
             let errorCount = 0;
 
+            // Build a flat list of all videos to download across all channels
+            const allToDownload = [];
             for (const ch of channels) {
                 let chVideos = ch.videos || (ch.data && ch.data.videos) || [];
                 if (!chVideos || chVideos.length === 0) {
@@ -2909,43 +3297,61 @@
                 );
 
                 for (const video of remaining) {
-                    try {
-                        const response = await fetch(`${API_BASE}/api/download`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                videoId: video.id || video.videoId,
-                                title: video.displayTitle || video.title,
-                                finalFilename: video.finalFilename || null,
-                                downloadFilename: video.downloadFilename || null,
-                                channelId: ch.id,
-                                channelName: ch.name,
-                                format: 'best',
-                                quality: 'lowest'
-                            })
-                        });
-
-                        const result = await response.json();
-                        if (result.status === 'queued' || result.downloadId) {
-                            video.downloadStatus = 'queued';
-                            video.downloadId = result.downloadId;
-                            totalQueued++;
-                        }
-                    } catch (err) {
-                        errorCount++;
-                    }
+                    allToDownload.push({ video, channel: ch });
                 }
             }
 
-            renderVideos();
-            refreshQueue();
-            startPolling();
+            const totalCount = allToDownload.length;
+            addLogEntry(`⬇️ Total ${totalCount} videos to queue across all channels`, 'info');
+
+            for (let qi = 0; qi < allToDownload.length; qi++) {
+                const { video, channel: ch } = allToDownload[qi];
+                try {
+                    const response = await fetch(`${API_BASE}/api/download`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            videoId: video.id || video.videoId,
+                            title: video.displayTitle || video.title,
+                            finalFilename: video.finalFilename || null,
+                            downloadFilename: video.downloadFilename || null,
+                            channelId: ch.id,
+                            channelName: ch.name,
+                            format: 'best',
+                            quality: 'lowest'
+                        })
+                    });
+
+                    const result = await response.json();
+                    if (result.status === 'queued' || result.downloadId) {
+                        video.downloadStatus = 'queued';
+                        video.downloadId = result.downloadId;
+                        totalQueued++;
+                    }
+                } catch (err) {
+                    errorCount++;
+                }
+
+                // Update queue display in real-time after each video
+                refreshQueue();
+                renderVideos();
+                updateChannelStats();
+
+                // 5-second delay between each queue request
+                if (qi < allToDownload.length - 1) {
+                    showAlert(`⬇️ Queuing ${qi + 1}/${totalCount}... (${ch.name})`, 'info', 4000);
+                    await new Promise(r => setTimeout(r, 5000));
+                }
+            }
 
             if (totalQueued > 0) {
                 showAlert(`✅ Queued ${totalQueued} remaining videos from all channels`, 'success');
                 addLogEntry(`✅ Queued ${totalQueued} remaining videos across all channels`, 'success');
             } else {
                 showAlert(`🎉 All available videos across channels are already downloaded or queued`, 'info');
+            }
+            if (errorCount > 0) {
+                showAlert(`⚠️ ${errorCount} videos failed to queue`, 'warning');
             }
         }
         
@@ -3307,6 +3713,67 @@
             } catch (error) {
                 console.error('Logout error:', error);
                 window.location.href = '/login';
+            }
+        }
+
+        // ==================== SINGLE FILE DOWNLOAD ====================
+
+        async function loadSingleFile() {
+            const input = document.getElementById('singleFileInput');
+            const rawValue = input.value.trim();
+
+            if (!rawValue) {
+                showAlert('Please enter YouTube video URL(s)', 'warning');
+                return;
+            }
+
+            const urlList = rawValue.split(/[,\n]+/).map(u => u.trim()).filter(u => u.length > 0);
+
+            if (urlList.length === 0) {
+                showAlert('No valid URLs found', 'warning');
+                return;
+            }
+
+            const btn = document.getElementById('loadSingleBtn');
+            btn.disabled = true;
+            btn.textContent = 'Loading...';
+
+            try {
+                addLogEntry(`⬇️ Queuing ${urlList.length} single file video(s)...`, 'info');
+
+                const response = await fetch(`${API_BASE}/api/download-single`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls: urlList.join(',') })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Failed to queue download');
+                }
+
+                showAlert(`✅ ${data.count} video(s) queued → Single-File folder`, 'success', 5000);
+                addLogEntry(`✅ Queued ${data.count} video(s) to: ${data.outputDir}`, 'success');
+
+                input.value = '';
+
+                // If Single-File container is active, refresh it after a short delay
+                if (singleFileActive) {
+                    setTimeout(() => loadSingleFileList(), 3000);
+                }
+
+                // Start polling so the queue panel appears immediately
+                startPolling();
+                refreshQueue();
+
+            } catch (error) {
+                console.error('[Single-File] Error:', error);
+                showAlert(`❌ ${error.message}`, 'error', 6000);
+                addLogEntry(`❌ Single file error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Load Single-File';
             }
         }
 
@@ -3954,12 +4421,17 @@
 
             let successCount = 0;
             let errorCount = 0;
+            const toDownload = videos.filter(v =>
+                v.downloadStatus !== 'completed' &&
+                v.downloadStatus !== 'downloading' &&
+                v.downloadStatus !== 'queued' &&
+                v.downloadStatus !== 'skipped'
+            );
 
-            for (let i = 0; i < videos.length; i++) {
-                const video = videos[i];
-                if (video.downloadStatus === 'completed' || video.downloadStatus === 'downloading' || video.downloadStatus === 'queued') {
-                    continue;
-                }
+            startPolling();
+
+            for (let i = 0; i < toDownload.length; i++) {
+                const video = toDownload[i];
 
                 try {
                     const response = await fetch(`${API_BASE}/api/download`, {
@@ -3992,10 +4464,17 @@
                 } catch (error) {
                     errorCount++;
                 }
-            }
 
-            renderVideos();
-            refreshQueue();
+                // Update queue display in real-time after each video
+                refreshQueue();
+                renderVideos();
+
+                // 5-second delay between each queue request
+                if (i < toDownload.length - 1) {
+                    btn.innerHTML = `<span class="spinner"></span> Queuing ${i + 1}/${toDownload.length}...`;
+                    await new Promise(r => setTimeout(r, 5000));
+                }
+            }
 
             btn.disabled = false;
             btn.textContent = '⬇️ Download All';
@@ -4007,8 +4486,6 @@
             if (errorCount > 0) {
                 showAlert(`⚠️ ${errorCount} videos failed to queue`, 'warning');
             }
-
-            startPolling();
         }
 
         function clearCompleted() {
@@ -4060,6 +4537,16 @@
                 }
 
                 renderQueue(activeItems);
+
+                // Update pending buffer count indicator
+                const bufferedStat = document.getElementById('bufferedStat');
+                const bufferedCount = document.getElementById('bufferedCount');
+                if (data.pendingBufferCount > 0) {
+                    bufferedStat.style.display = '';
+                    bufferedCount.textContent = data.pendingBufferCount;
+                } else {
+                    bufferedStat.style.display = 'none';
+                }
 
                 const allItems = [...activeItems, ...completedItems];
                 let statusChanged = false;
@@ -4138,10 +4625,12 @@
             container.innerHTML = queue.map((item, index) => {
                 const isWaitingItem = item.isWaiting || item.status === 'queued' || item.status === 'waiting';
                 const isActiveItem = item.isActive || item.status === 'downloading';
+                const channelTag = item.channelName ? `<span class="queue-channel-tag" title="${escapeHtml(item.channelName)}">${escapeHtml(item.channelName)}</span>` : '';
                 return `
                 <div class="queue-item ${isActiveItem ? 'downloading' : 'waiting'}" id="queue-${item.id || item.downloadId || index}">
                     <div class="queue-item-info">
                         <span class="queue-position">#${index + 1}</span>
+                        ${channelTag}
                         <span class="queue-item-title" title="${escapeHtml(item.title || 'Download')}">${escapeHtml(item.title || 'Download')}</span>
                     </div>
                     <div class="queue-item-status">
