@@ -1,70 +1,17 @@
 #!/bin/bash
 
-# =============================================================================
-# STARTUP PROCESS KILLER - Kills stale bash.exe and sleep.exe on start
-# =============================================================================
-
-startup_process_killer() {
-    echo "[STARTUP] Waiting 3 seconds for system to stabilize..."
-    sleep 3
-    
-    echo "[STARTUP] Searching for stale processes..."
-    
-    local killed_bash=0
-    local killed_sleep=0
-    
-    # Try taskkill (Windows native) - works in Git Bash, MSYS2, Cygwin
-    if command -v taskkill &> /dev/null; then
-        echo "[STARTUP] Using taskkill to find and terminate processes..."
-        
-        # Find and kill sleep.exe processes
-        local sleep_count=$(tasklist //FI "IMAGENAME eq sleep.exe" //NH //FO CSV 2>/dev/null | grep -i "sleep.exe" | wc -l)
-        if [ "$sleep_count" -gt 0 ] 2>/dev/null; then
-            taskkill //F //IM sleep.exe 2>/dev/null && killed_sleep=$sleep_count
-            echo "[STARTUP] ✅ Killed $killed_sleep stale sleep.exe process(es)"
-        else
-            echo "[STARTUP] No sleep.exe processes found"
-        fi
-        
-        # Find and kill bash.exe processes EXCLUDING current script's process
-        local current_pid=$$
-        echo "[STARTUP] Current script PID: $current_pid (will be spared)"
-        
-        # Get PIDs of all bash.exe processes and kill only non-current ones
-        tasklist //FI "IMAGENAME eq bash.exe" //NH //FO CSV 2>/dev/null | grep -i "bash.exe" | while IFS=',' read -r pid rest; do
-            # Extract numeric PID (remove quotes and spaces)
-            pid=$(echo "$pid" | tr -d '" ' | grep -oE '[0-9]+')
-            if [ -n "$pid" ] && [ "$pid" != "$current_pid" ]; then
-                taskkill //F //PID "$pid" 2>/dev/null && echo "[STARTUP] ✅ Killed stale bash.exe PID: $pid"
-            elif [ "$pid" = "$current_pid" ]; then
-                echo "[STARTUP] ⏭️ Skipped current process PID: $pid"
-            fi
-        done
-    fi
-    
-    # Fallback: Use pkill if available (excluding current process)
-    if command -v pkill &> /dev/null; then
-        echo "[STARTUP] Using pkill for additional cleanup..."
-        pkill -f "sleep\.exe" 2>/dev/null && echo "[STARTUP] pkill: sleep.exe terminated"
-        # pkill with -o selects oldest, but we need to exclude current PID
-        # Safer: just use it for sleep, skip bash pkill to avoid self-kill
-        echo "[STARTUP] Skipped pkill for bash.exe (safety: avoid killing self)"
-    fi
-    
-    echo "[STARTUP] 🧹 Startup cleanup complete (bash: $killed_bash, sleep: $killed_sleep)"
-    echo "[STARTUP] -------------------------------------------"
-}
-
-# Execute startup killer immediately
-startup_process_killer
+# NOTE: Startup process-killing removed. It was a Catch-22 — it needs a
+# working terminal to run, but it's supposed to fix terminal shortages.
+# Orphan cleanup now happens solely on exit via the PID-file system below.
 
 # =============================================================================
 # PROCESS CLEANUP SYSTEM - Kills orphan processes on exit
 # =============================================================================
 
-# Configuration
-CLEANUP_LOG="cleanup.log"
-GRACEFUL_DELAY=3  # Seconds to wait before force-killing
+# Configuration — use absolute path so tee works even if cwd is system32
+SCRIPT_DIR_EARLY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLEANUP_LOG="$SCRIPT_DIR_EARLY/cleanup.log"
+GRACEFUL_DELAY=0  # No delay — Ctrl+C exits instantly
 
 # Logging function
 cleanup_log() {
@@ -111,35 +58,29 @@ cleanup_windows_processes() {
     local killed_bash=0
     local killed_sleep=0
     
-    # Method 1: Try taskkill (Windows native command)
-    if command -v taskkill &> /dev/null; then
-        cleanup_log "Using taskkill for process termination..."
-        
-        # Kill all sleep.exe processes
-        local sleep_pids=$(tasklist //FI "IMAGENAME eq sleep.exe" //NH //FO CSV 2>/dev/null | grep -i "sleep.exe" | wc -l)
-        if [ "$sleep_pids" -gt 0 ] 2>/dev/null; then
-            taskkill //F //IM sleep.exe 2>/dev/null && killed_sleep=$sleep_pids
-            cleanup_log "Terminated $killed_sleep sleep.exe process(es)"
-        fi
-        
-        # Kill all bash.exe processes EXCEPT current script's bash
-        local bash_pids=$(tasklist //FI "IMAGENAME eq bash.exe" //NH //FO CSV 2>/dev/null | grep -i "bash.exe" | wc -l)
-        if [ "$bash_pids" -gt 1 ] 2>/dev/null; then
-            taskkill //F //IM bash.exe 2>/dev/null && killed_bash=$((bash_pids - 1))
-            cleanup_log "Terminated $killed_bash additional bash.exe process(es)"
-        fi
+    # PATCHED: Only kill processes we OWNED (tracked in .1sh.pids)
+    # Never kill ALL bash.exe / sleep.exe globally — that nukes the user's
+    # other terminals and the script's own keep_terminal_open sleep.
+    if [ -n "${SCRIPT_DIR:-}" ] && [ -f "$SCRIPT_DIR/.1sh.pids" ]; then
+        cleanup_log "Using PID file for targeted cleanup..."
+        while read -r p; do
+            [ -n "$p" ] || continue
+            taskkill //F //PID "$p" 2>/dev/null && {
+                killed_bash=$((killed_bash + 1))
+                cleanup_log "Terminated orphan PID: $p"
+            }
+        done < "$SCRIPT_DIR/.1sh.pids"
+        rm -f "$SCRIPT_DIR/.1sh.pids"
+    else
+        cleanup_log "No PID file found — skipping global kill (safety)"
     fi
-    
-    # Method 2: Use pkill (available in Git Bash/MSYS2)
-    if command -v pkill &> /dev/null; then
-        cleanup_log "Using pkill for additional cleanup..."
-        
-        # Kill sleep.exe
-        pkill -f "sleep\.exe" 2>/dev/null && cleanup_log "pkill: sleep.exe terminated"
-        pkill -f "sleep" 2>/dev/null && cleanup_log "pkill: sleep terminated"
+
+    # Fallback: kill only the server child we spawned this session
+    if [ -n "${SERVER_PID:-}" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        kill "$SERVER_PID" 2>/dev/null && cleanup_log "Terminated server child PID: $SERVER_PID"
     fi
-    
-    cleanup_log "Windows cleanup complete (bash: $killed_bash, sleep: $killed_sleep)"
+
+    cleanup_log "Windows cleanup complete (orphan PIDs killed: $killed_bash)"
 }
 
 # Unix/Linux/macOS cleanup
@@ -182,11 +123,19 @@ graceful_cleanup() {
     cleanup_log "Starting graceful shutdown (${GRACEFUL_DELAY}s delay)..."
     
     # Attempt graceful termination first
+    # PATCHED: Do NOT kill sleep.exe globally — our own keep_terminal_open
+    # uses sleep 3600 and killing it would cause the terminal to close early.
+    # Just kill direct children.
     if [ "$OS_TYPE" = "windows" ] || [ "$OS_TYPE" = "msys" ] || [ "$OS_TYPE" = "cygwin" ]; then
-        taskkill //F //IM sleep.exe 2>/dev/null || true
+        # Kill only tracked orphans, not all sleep.exe
+        if [ -n "${SCRIPT_DIR:-}" ] && [ -f "$SCRIPT_DIR/.1sh.pids" ]; then
+            while read -r p; do
+                [ -n "$p" ] && taskkill //F //PID "$p" 2>/dev/null || true
+            done < "$SCRIPT_DIR/.1sh.pids"
+            rm -f "$SCRIPT_DIR/.1sh.pids"
+        fi
     else
         pkill -P $$ 2>/dev/null || true
-        pkill -f "sleep" 2>/dev/null || true
     fi
     
     # Wait for processes to terminate gracefully
@@ -200,13 +149,15 @@ graceful_cleanup() {
 
 # Force kill remaining processes
 cleanup_processes_force() {
-    if command -v pkill &> /dev/null; then
-        pkill -9 -f "sleep" 2>/dev/null || true
-        pkill -9 -P $$ 2>/dev/null || true
+    # PATCHED: Same as above — targeted kill only, never global sleep.exe
+    if [ -n "${SCRIPT_DIR:-}" ] && [ -f "$SCRIPT_DIR/.1sh.pids" ]; then
+        while read -r p; do
+            [ -n "$p" ] && taskkill //F //PID "$p" 2>/dev/null || true
+        done < "$SCRIPT_DIR/.1sh.pids"
+        rm -f "$SCRIPT_DIR/.1sh.pids"
     fi
-    
-    if command -v taskkill &> /dev/null; then
-        taskkill //F //IM sleep.exe 2>/dev/null || true
+    if [ -n "${SERVER_PID:-}" ]; then
+        kill -9 "$SERVER_PID" 2>/dev/null || true
     fi
 }
 
@@ -214,14 +165,15 @@ cleanup_processes_force() {
 # REGISTER TRAPS - Catch ALL exit signals
 # =============================================================================
 trap 'cleanup_log "Received EXIT signal"; graceful_cleanup' EXIT
-trap 'cleanup_log "Received INT signal (Ctrl+C)"; graceful_cleanup' INT
+trap 'cleanup_log "Received INT signal (Ctrl+C) — exiting immediately"; cleanup_processes_force; exit 130' INT
 trap 'cleanup_log "Received TERM signal"; graceful_cleanup' TERM
 trap 'cleanup_log "Received HUP signal (terminal closed)"; graceful_cleanup' HUP
 trap 'cleanup_log "Received QUIT signal"; graceful_cleanup' QUIT
-trap 'cleanup_log "Received BREAK signal"; graceful_cleanup' BREAK
+# BREAK is not a valid bash signal (only in DOS/Windows cmd).
+# Silently skipped to avoid "invalid signal specification" error.
 
 cleanup_log "🚀 Process cleanup system initialized (PID: $$)"
-cleanup_log "Traps registered for: EXIT, INT, TERM, HUP, QUIT, BREAK"
+cleanup_log "Traps registered for: EXIT, INT, TERM, HUP, QUIT"
 
 # ... REST OF ORIGINAL 1.sh SCRIPT CONTINUES BELOW ...
 
@@ -1249,7 +1201,9 @@ start_server() {
     # ⭐ FIXED: Set default download directory based on OS
     if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]] || [[ -n "$WINDIR" || -n "windir" ]]; then
         # Windows (Git Bash/Cygwin/MSYS)
-        export DOWNLOADS_DIR="C:\\Users\\Jackle\\Downloads\\YouTube-Downloader"
+        # Use $USERPROFILE (set by cmd.exe) or $HOME (set by bash) — never hardcode a username
+        local _win_home="${USERPROFILE:-${HOME}}"
+        export DOWNLOADS_DIR="$_win_home/Downloads/YouTube-Downloader"
         log "Windows detected: Setting DOWNLOADS_DIR=$DOWNLOADS_DIR"
     elif [[ "$OSTYPE" == "darwin"* ]]; then
         # macOS
@@ -1310,6 +1264,18 @@ start_server() {
     # Start server in background with DOWNLOADS_DIR environment variable
     DOWNLOADS_DIR="$DOWNLOADS_DIR" node "$SERVER_JS" > /tmp/youtube-downloader-server.log 2>&1 &
     SERVER_PID=$!
+
+    # PATCHED: Record the server's Windows PID so the next run can clean it up
+    # (avoids killing ALL bash.exe/node.exe globally)
+    local _sp_winpid=0
+    if command -v ps >/dev/null 2>&1; then
+        _sp_winpid=$(ps -W 2>/dev/null | awk -v pid=$SERVER_PID '$1==pid {print $4; exit}')
+    fi
+    _sp_winpid=${_sp_winpid:-0}
+    if [ "$_sp_winpid" -gt 0 ] 2>/dev/null; then
+        echo "$_sp_winpid" >> "$SCRIPT_DIR/.1sh.pids"
+        log "Recorded server WinPID $_sp_winpid for next-run cleanup"
+    fi
     
     sleep 3
 
@@ -1347,9 +1313,13 @@ open_browser() {
     log "Opening browser at: $URL"
 
     if [ "$IS_WINDOWS" = true ] || [ "$IS_CYGWIN" = true ] || [ "$IS_MSYS" = true ]; then
-        # Windows: use start command
-        start "$URL" 2>/dev/null || cmd //c start "" "$URL" 2>/dev/null || \
-        explorer "$URL" 2>/dev/null || warn "Could not auto-open browser"
+        # Windows: use explorer directly — it opens the default browser
+        # without spawning a console window (no PTY slot consumed).
+        # Falls back to cmd //c start with MSYS_NO_PATHCONV to prevent
+        # MSYS from rewriting /flags as drive paths (e.g. /b → b:/).
+        explorer "$URL" 2>/dev/null || \
+        MSYS_NO_PATHCONV=1 cmd //c start "" "$URL" 2>/dev/null || \
+        warn "Could not auto-open browser"
     elif [ "$IS_MAC" = true ]; then
         # macOS: use open command
         open "$URL" 2>/dev/null || warn "Could not auto-open browser"
