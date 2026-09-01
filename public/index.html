@@ -2118,6 +2118,123 @@
             border: 1px solid #bee5eb;
         }
 
+        /* Duplicate File Popup */
+        .dup-popup-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+        }
+        .dup-popup-overlay.active {
+            display: flex;
+        }
+        .dup-popup {
+            background: white;
+            border-radius: 12px;
+            padding: 20px 24px;
+            max-width: 480px;
+            width: 90%;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .dup-popup h3 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: #333;
+        }
+        .dup-popup-item {
+            background: #fff3cd;
+            border: 1px solid #ffeeba;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+        }
+        .dup-popup-item-title {
+            font-weight: 600;
+            font-size: 13px;
+            color: #856404;
+            margin-bottom: 4px;
+            word-break: break-word;
+        }
+        .dup-popup-item-info {
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+        .dup-popup-item-actions {
+            display: flex;
+            gap: 6px;
+        }
+        .dup-popup-item-actions button {
+            flex: 1;
+            padding: 6px 10px;
+            border: none;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .dup-btn-rename {
+            background: #1565c0;
+            color: white;
+        }
+        .dup-btn-rename:hover {
+            background: #0d47a1;
+        }
+        .dup-btn-skip {
+            background: #e0e0e0;
+            color: #333;
+        }
+        .dup-btn-skip:hover {
+            background: #bdbdbd;
+        }
+        .dup-popup-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid #eee;
+        }
+        .dup-popup-footer button {
+            padding: 8px 18px;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .dup-btn-confirm {
+            background: #1565c0;
+            color: white;
+        }
+        .dup-btn-confirm:hover {
+            background: #0d47a1;
+        }
+        .dup-btn-cancel {
+            background: #e0e0e0;
+            color: #333;
+        }
+        .dup-btn-cancel:hover {
+            background: #bdbdbd;
+        }
+        .dup-non-dup-list {
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #555;
+        }
+        .dup-non-dup-item {
+            padding: 3px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .dup-non-dup-item:last-child {
+            border-bottom: none;
+        }
+
         /* Spinner */
         .spinner {
             display: inline-block;
@@ -3832,6 +3949,9 @@
 
         // ==================== SINGLE FILE DOWNLOAD ====================
 
+        // Pending precheck data for duplicate popup
+        let pendingSingleFilePrecheck = null;
+
         async function loadSingleFile() {
             const input = document.getElementById('singleFileInput');
             const rawValue = input.value.trim();
@@ -3841,7 +3961,7 @@
                 return;
             }
 
-            const urlList = rawValue.split(/[,\n]+/).map(u => u.trim()).filter(u => u.length > 0);
+            const urlList = rawValue.split(/[\n,]+/).map(u => u.trim()).filter(u => u.length > 0);
 
             if (urlList.length === 0) {
                 showAlert('No valid URLs found', 'warning');
@@ -3850,10 +3970,10 @@
 
             const btn = document.getElementById('loadSingleBtn');
             btn.disabled = true;
-            btn.textContent = 'Loading...';
+            btn.textContent = 'Checking...';
 
             try {
-                addLogEntry(`⬇️ Queuing ${urlList.length} single file video(s)...`, 'info');
+                addLogEntry(`⬇️ Checking ${urlList.length} single file video(s)...`, 'info');
 
                 const response = await fetch(`${API_BASE}/api/download-single`, {
                     method: 'POST',
@@ -3863,23 +3983,20 @@
 
                 const data = await response.json();
 
-                if (!response.ok || !data.success) {
-                    throw new Error(data.error || 'Failed to queue download');
+                if (!data.success) {
+                    throw new Error(data.error || 'Failed to process');
                 }
 
-                showAlert(`✅ ${data.count} video(s) queued → Single-File folder`, 'success', 5000);
-                addLogEntry(`✅ Queued ${data.count} video(s) to: ${data.outputDir}`, 'success');
-
-                input.value = '';
-
-                // If Single-File container is active, refresh it after a short delay
-                if (singleFileActive) {
-                    setTimeout(() => loadSingleFileList(), 3000);
+                // Phase: precheck = duplicates found, show popup
+                if (data.phase === 'precheck') {
+                    pendingSingleFilePrecheck = data;
+                    showDuplicatePopup(data);
+                    addLogEntry(`⚠️ ${data.duplicates.length} duplicate(s) detected`, 'warning');
+                    return;
                 }
 
-                // Start polling so the queue panel appears immediately
-                startPolling();
-                refreshQueue();
+                // Phase: download = no duplicates, already queued
+                finishSingleFileDownload(data);
 
             } catch (error) {
                 console.error('[Single-File] Error:', error);
@@ -3889,6 +4006,127 @@
                 btn.disabled = false;
                 btn.textContent = 'Load Single-File';
             }
+        }
+
+        function finishSingleFileDownload(data) {
+            showAlert(`✅ ${data.count} video(s) queued → Single-File folder`, 'success', 5000);
+            addLogEntry(`✅ Queued ${data.count} video(s) to: ${data.outputDir}`, 'success');
+            document.getElementById('singleFileInput').value = '';
+            if (singleFileActive) {
+                setTimeout(() => loadSingleFileList(), 3000);
+            }
+            startPolling();
+            refreshQueue();
+        }
+
+        function showDuplicatePopup(data) {
+            const overlay = document.getElementById('dupPopupOverlay');
+            const nonDupList = data.precheckResults.filter(r => !r.isDuplicate);
+            const dupList = data.duplicates;
+
+            let nonDupHtml = '';
+            if (nonDupList.length > 0) {
+                nonDupHtml = '<div class="dup-non-dup-list"><strong>' + nonDupList.length + ' new video(s) will download:</strong>';
+                nonDupList.forEach(r => {
+                    nonDupHtml += '<div class="dup-non-dup-item">✅ ' + escapeHtml(r.title || r.proposedFilename) + '</div>';
+                });
+                nonDupHtml += '</div>';
+            }
+
+            let dupHtml = '';
+            dupList.forEach((d, idx) => {
+                const escapedTitle = escapeHtml(d.title || d.existingFile);
+                const escapedRenamed = escapeHtml(d.renamedFile || '').replace(/'/g, "\'");
+                dupHtml += '<div class="dup-popup-item" data-idx="' + idx + '">';
+                dupHtml += '<div class="dup-popup-item-title">⚠️ ' + escapedTitle + '</div>';
+                dupHtml += '<div class="dup-popup-item-info">"' + escapeHtml(d.existingFile) + '" already exists</div>';
+                dupHtml += '<div class="dup-popup-item-actions">';
+                dupHtml += `<button class="dup-btn-rename" onclick="setDupDecision(${idx}, 'rename', '${escapedRenamed}')">Auto-Rename</button>`;
+                dupHtml += `<button class="dup-btn-skip" onclick="setDupDecision(${idx}, 'skip', null)">Abort</button>`;
+                dupHtml += '</div></div>';
+            });
+
+            document.getElementById('dupPopupBody').innerHTML = nonDupHtml + dupHtml;
+            overlay.classList.add('active');
+        }
+
+        let dupDecisions = {};
+
+        function setDupDecision(idx, action, filename) {
+            dupDecisions[idx] = { action: action, filename: filename };
+
+            const item = document.querySelector('.dup-popup-item[data-idx="' + idx + '"]');
+            if (item) {
+                item.querySelectorAll('button').forEach(btn => btn.style.opacity = '0.4');
+                const chosen = action === 'rename' ? item.querySelector('.dup-btn-rename') : item.querySelector('.dup-btn-skip');
+                if (chosen) {
+                    chosen.style.opacity = '1';
+                    chosen.style.boxShadow = '0 0 0 2px ' + (action === 'rename' ? '#1565c0' : '#333');
+                }
+                item.style.background = action === 'rename' ? '#e3f2fd' : '#f5f5f5';
+                item.style.borderColor = action === 'rename' ? '#90caf9' : '#e0e0e0';
+            }
+        }
+
+        async function confirmDuplicatePopup() {
+            document.getElementById('dupPopupOverlay').classList.remove('active');
+
+            const data = pendingSingleFilePrecheck;
+            if (!data) return;
+
+            const decisions = data.precheckResults.map((r, idx) => {
+                if (!r.isDuplicate) {
+                    return { url: r.url, videoId: r.videoId, title: r.title, proposedFilename: r.proposedFilename, action: 'download', filename: r.proposedFilename };
+                }
+                const dupIdx = data.duplicates.findIndex(d => d.url === r.url);
+                const decision = dupDecisions[dupIdx] || { action: 'skip', filename: null };
+                return {
+                    url: r.url,
+                    videoId: r.videoId,
+                    title: r.title,
+                    proposedFilename: r.proposedFilename,
+                    action: decision.action,
+                    filename: decision.filename || r.proposedFilename
+                };
+            });
+
+            const btn = document.getElementById('loadSingleBtn');
+            btn.disabled = true;
+            btn.textContent = 'Queuing...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/download-single/confirm`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ decisions: decisions })
+                });
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    throw new Error(result.error || 'Failed to confirm downloads');
+                }
+
+                finishSingleFileDownload(result);
+
+            } catch (error) {
+                showAlert(`❌ ${error.message}`, 'error', 6000);
+                addLogEntry(`❌ Confirm error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Load Single-File';
+                pendingSingleFilePrecheck = null;
+                dupDecisions = {};
+            }
+        }
+
+        function cancelDuplicatePopup() {
+            document.getElementById('dupPopupOverlay').classList.remove('active');
+            pendingSingleFilePrecheck = null;
+            dupDecisions = {};
+            document.getElementById('loadSingleBtn').disabled = false;
+            document.getElementById('loadSingleBtn').textContent = 'Load Single-File';
+            addLogEntry('Download cancelled by user', 'info');
         }
 
         // ==================== CHANNEL LOADING ====================
@@ -5406,5 +5644,17 @@
             }
         }
     </script>
+
+    <!-- Duplicate File Popup -->
+    <div class="dup-popup-overlay" id="dupPopupOverlay">
+        <div class="dup-popup">
+            <h3>⚠️ File Already Exists</h3>
+            <div id="dupPopupBody"></div>
+            <div class="dup-popup-footer">
+                <button class="dup-btn-cancel" onclick="cancelDuplicatePopup()">Cancel</button>
+                <button class="dup-btn-confirm" onclick="confirmDuplicatePopup()">Confirm</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

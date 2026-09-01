@@ -1666,9 +1666,10 @@ app.post('/api/download', async (req, res) => {
 // Accepts one or more YouTube video URLs (comma/newline separated)
 // Downloads to DOWNLOADS_DIR/Single-File/
 // =============================================================================
+
 app.post('/api/download-single', async (req, res) => {
     console.log('\n' + '='.repeat(80));
-    console.log('⬇️ [Single File] POST /api/download-single');
+    console.log('[Single File] POST /api/download-single');
     console.log('='.repeat(80));
 
     try {
@@ -1685,60 +1686,102 @@ app.post('/api/download-single', async (req, res) => {
             return res.status(400).json({ success: false, error: 'No valid URLs provided' });
         }
 
+        // === PHASE 1: Pre-check all URLs (fetch titles + detect duplicates) ===
+        const precheckResults = [];
         const outputDir = getSingleFileDir();
-        const results = [];
 
         for (const videoUrl of urlList) {
-            const downloadId = uuidv4();
-
-            // Extract video ID from URL for a reasonable filename
             const vidMatch = videoUrl.match(/(?:v=|\/v\/|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
-            const videoId = vidMatch ? vidMatch[1] : downloadId.substring(0, 11);
-            const outputFilename = `video_${videoId}.mp4`;
-            const outputPath = path.join(outputDir, outputFilename);
+            const videoId = vidMatch ? vidMatch[1] : null;
 
-            console.log(`[Single File] Queuing: ${videoUrl} -> ${outputPath}`);
+            // Fetch video title using yt-dlp --dump-json
+            const cmd = 'yt-dlp --dump-json --no-download "' + videoUrl + '"';
+            const strategies = buildCommandsWithCookieStrategies(cmd, videoUrl);
 
-            const download = downloadManager.add({
-                id: downloadId,
-                url: videoUrl,
-                videoId: videoId,
-                channelId: null,
-                channelName: 'Single-File',
-                title: null,
-                filename: outputFilename,
-                outputPath: outputPath,
-                format: 'best',
-                quality: 'auto',
-                status: 'queued',
-                progress: 0,
-                startTime: null,
-                endTime: null,
-                createdAt: new Date().toISOString(),
-                needsRename: true,
-                hasFinalFilename: false
-            });
+            try {
+                const title = await new Promise((resolve, reject) => {
+                    executeWithRetry(
+                        strategies,
+                        0,
+                        (stdout) => {
+                            try {
+                                const info = JSON.parse(stdout.trim());
+                                resolve(info.title || null);
+                            } catch (e) {
+                                reject(new Error('Failed to parse video info'));
+                            }
+                        },
+                        (error) => reject(error)
+                    );
+                });
 
-            downloadQueue.enqueue(downloadId, videoUrl, outputPath, `Single-File: ${videoId}`);
+                // Build proper filename using same sanitization as channel videos
+                const sanitizedTitle = sanitizeViaPython(title || 'Untitled');
+                let outputFilename = sanitizedTitle + '.mp4';
 
-            results.push({
-                videoId,
-                url: videoUrl,
-                jobId: downloadId,
-                status: 'queued'
+                // Check if file already exists on disk
+                const filePath = path.join(outputDir, outputFilename);
+                const isDuplicate = fs.existsSync(filePath);
+
+                // If duplicate, propose auto-renamed version
+                let renamedFilename = null;
+                if (isDuplicate) {
+                    let counter = 2;
+                    while (fs.existsSync(path.join(outputDir, sanitizedTitle + ' (' + counter + ').mp4'))) {
+                        counter++;
+                    }
+                    renamedFilename = sanitizedTitle + ' (' + counter + ').mp4';
+                }
+
+                precheckResults.push({
+                    url: videoUrl,
+                    videoId: videoId,
+                    title: title,
+                    proposedFilename: outputFilename,
+                    isDuplicate: isDuplicate,
+                    renamedFilename: renamedFilename
+                });
+
+                console.log('[Single File] Pre-check: "' + (title || '').substring(0, 50) + '" -> ' + outputFilename + (isDuplicate ? ' (DUPLICATE)' : ''));
+
+            } catch (err) {
+                console.warn('[Single File] Failed to fetch title for ' + videoUrl + ': ' + err.message);
+                // Fallback to video ID based name if title fetch fails
+                const fallbackId = videoId || 'unknown';
+                const fallbackName = 'video_' + fallbackId + '.mp4';
+                precheckResults.push({
+                    url: videoUrl,
+                    videoId: fallbackId,
+                    title: null,
+                    proposedFilename: fallbackName,
+                    isDuplicate: fs.existsSync(path.join(outputDir, fallbackName)),
+                    renamedFilename: null
+                });
+            }
+        }
+
+        // === PHASE 2: Check if any duplicates need user decision ===
+        const duplicates = precheckResults.filter(r => r.isDuplicate);
+
+        if (duplicates.length > 0) {
+            // Return pre-check results and wait for user decision
+            return res.json({
+                success: true,
+                phase: 'precheck',
+                message: duplicates.length + ' file(s) already exist',
+                precheckResults: precheckResults,
+                duplicates: duplicates.map(d => ({
+                    url: d.url,
+                    videoId: d.videoId,
+                    title: d.title,
+                    existingFile: d.proposedFilename,
+                    renamedFile: d.renamedFilename
+                }))
             });
         }
 
-        res.status(201).json({
-            success: true,
-            message: `Queued ${results.length} video(s) for download`,
-            count: results.length,
-            downloads: results,
-            outputDir: outputDir
-        });
-
-        console.log(`[Single File] ✅ Queued ${results.length} video(s) to ${outputDir}`);
-        console.log('='.repeat(80) + '\n');
+        // === PHASE 3: No duplicates - queue all downloads directly ===
+        return queueSingleFileDownloads(precheckResults, outputDir, res);
 
     } catch (error) {
         console.error('[Single File] Error:', error.message);
@@ -1748,6 +1791,112 @@ app.post('/api/download-single', async (req, res) => {
         });
     }
 });
+
+// POST /api/download-single/confirm - called after user resolves duplicates
+app.post('/api/download-single/confirm', async (req, res) => {
+    console.log('\n[Single File] POST /api/download-single/confirm');
+
+    try {
+        const { decisions } = req.body; // Array of { url, action: 'download'|'skip'|'rename', filename? }
+
+        if (!decisions || !Array.isArray(decisions)) {
+            return res.status(400).json({ success: false, error: 'Decisions array required' });
+        }
+
+        const outputDir = getSingleFileDir();
+        const toDownload = [];
+
+        for (const decision of decisions) {
+            if (decision.action === 'skip') {
+                console.log('[Single File] Skipping: ' + (decision.title || decision.url));
+                continue;
+            }
+
+            const filename = decision.filename || decision.proposedFilename || ('video_' + decision.videoId + '.mp4');
+            toDownload.push({
+                url: decision.url,
+                videoId: decision.videoId,
+                title: decision.title,
+                proposedFilename: filename
+            });
+        }
+
+        if (toDownload.length === 0) {
+            return res.json({
+                success: true,
+                message: 'All downloads skipped',
+                count: 0,
+                downloads: [],
+                outputDir: outputDir
+            });
+        }
+
+        return queueSingleFileDownloads(toDownload, outputDir, res);
+
+    } catch (error) {
+        console.error('[Single File] Confirm Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to confirm downloads: ' + error.message
+        });
+    }
+});
+
+// Shared function: queue downloads from resolved file list
+function queueSingleFileDownloads(fileList, outputDir, res) {
+    const results = [];
+
+    for (const item of fileList) {
+        const downloadId = uuidv4();
+        const outputFilename = item.proposedFilename;
+        const outputPath = path.join(outputDir, outputFilename);
+
+        console.log('[Single File] Queuing: "' + (item.title || item.url).substring(0, 60) + '" -> ' + outputFilename);
+
+        const download = downloadManager.add({
+            id: downloadId,
+            url: item.url,
+            videoId: item.videoId,
+            channelId: null,
+            channelName: 'Single-File',
+            title: item.title,
+            filename: outputFilename,
+            outputPath: outputPath,
+            format: 'best',
+            quality: 'auto',
+            status: 'queued',
+            progress: 0,
+            startTime: null,
+            endTime: null,
+            createdAt: new Date().toISOString(),
+            needsRename: false,
+            hasFinalFilename: true
+        });
+
+        downloadQueue.enqueue(downloadId, item.url, outputPath, item.title || outputFilename);
+
+        results.push({
+            videoId: item.videoId,
+            url: item.url,
+            title: item.title,
+            jobId: downloadId,
+            status: 'queued',
+            filename: outputFilename
+        });
+    }
+
+    res.status(201).json({
+        success: true,
+        phase: 'download',
+        message: 'Queued ' + results.length + ' video(s) for download',
+        count: results.length,
+        downloads: results,
+        outputDir: outputDir
+    });
+
+    console.log('[Single File] Queued ' + results.length + ' video(s) to ' + outputDir);
+    console.log('='.repeat(80) + '\n');
+}
 
 // =============================================================================
 // SINGLE-FILE BROWSE ENDPOINT
