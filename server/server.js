@@ -3515,11 +3515,11 @@ async function executeDownloadWithFormat(downloadId, videoUrl, outputPath, forma
             console.log(`[Execute Download] 🔊 MERGE MODE: combining video (${formatInfo.formatId}) + bestaudio`);
         }
 
-        // ⭐ FIX: Pass tempPath directly (no quotes needed with shell: false)
-        // spawn() with shell: false passes args verbatim, so spaces are safe.
+        // ⭐ FIX: Quote the output path to handle spaces in directory names (e.g. "Single File")
+        const quotedTempPath = `"${tempPath}"`;
         const args = [
             '-f', formatSelector,
-            '-o', tempPath,  // ⭐ passed verbatim via spawn argv
+            '-o', quotedTempPath,  // ⭐ KEY: Quoted SHORT path handles spaces!
             '--no-playlist',
             '--embed-chapters',
             '--embed-metadata',
@@ -3563,7 +3563,7 @@ async function executeDownloadWithFormat(downloadId, videoUrl, outputPath, forma
 
         const ytDlpProcess = spawn('yt-dlp', args, {
             stdio: ['pipe', 'pipe', 'pipe'],
-            shell: false,  // ⭐ FIXED: DEP0190 — args passed directly, no shell concatenation
+            shell: true,
             cwd: outputDir
         });
 
