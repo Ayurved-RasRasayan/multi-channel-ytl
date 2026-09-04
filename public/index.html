@@ -596,8 +596,8 @@
         .channel-item {
             display: flex;
             align-items: center;
-            gap: 10px;
-            padding: 12px 14px;
+            gap: 8px;
+            padding: 8px 10px;
             margin-bottom: 6px;
             border: 2px solid transparent;
             border-radius: 10px;
@@ -747,23 +747,23 @@
             color: #558b2f;
         }
 
-        /* Channel Item Icon */
+        /* ⭐ Channel Item Icon — circular avatar (compact, smaller than original) */
         .channel-item-icon {
-            width: 36px;
-            height: 36px;
+            width: 28px;
+            height: 28px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 16px;
+            font-size: 13px;
             flex-shrink: 0;
             color: white;
         }
         
         .channel-item.active .channel-item-icon {
-            background: linear-gradient(135deg, #3949ab 0%, #1a237e 100%);
-            box-shadow: 0 2px 8px rgba(26, 35, 126, 0.3);
+            background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+            box-shadow: 0 2px 6px rgba(99, 102, 241, 0.3);
         }
         
         /* Channel Item Content */
@@ -772,42 +772,44 @@
             min-width: 0;
             display: flex;
             flex-direction: column;
-            gap: 2px;
+            gap: 3px;
         }
         
         .channel-item-name {
             font-size: 13px;
             font-weight: 600;
-            color: #333;
+            color: #111827;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
             transition: color 0.25s ease;
+            line-height: 1.2;
         }
         
         .channel-item-meta {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
             font-size: 11px;
-            color: #888;
+            color: #6B7280;
+            font-weight: 500;
         }
         
         .channel-item-videos {
-            background: #e3f2fd;
-            color: #1976d2;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-weight: 600;
-            font-size: 10px;
+            background: transparent;
+            color: #6B7280;
+            padding: 0;
+            border-radius: 0;
+            font-weight: 500;
+            font-size: 11px;
         }
         
-        /* Channel Item Actions */
+        /* Channel Item Actions — full-width row below name+stats */
         .channel-item-actions {
             display: flex;
             flex-direction: row;
             gap: 4px;
-            opacity: 0;
+            opacity: 1;   /* ⭐ always visible (was 0 / hover-reveal) */
             transition: opacity 0.2s ease;
         }
         
@@ -819,29 +821,112 @@
             width: 24px;
             height: 24px;
             border: none;
-            border-radius: 6px;
+            border-radius: 5px;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 11px;
-            transition: all 0.2s ease;
+            transition: all 0.15s ease;
             padding: 0;
         }
         
         .channel-item-btn-refresh {
-            background: #e3f2fd;
-            color: #1565c0;
+            background: #DBEAFE;
+            color: #2563EB;
         }
         
         .channel-item-btn-refresh:hover {
-            background: #1565c0;
+            background: #2563EB;
             color: white;
             transform: scale(1.1);
         }
         
         .channel-item-btn-refresh.refreshing {
             animation: spin 1s linear infinite;
+        }
+
+        /* ⭐ Fix-Dates button — amber/orange accent for date-stamping */
+        .channel-item-btn-fix-dates {
+            background: #DBEAFE;
+            color: #2563EB;
+        }
+
+        .channel-item-btn-fix-dates:hover {
+            background: #2563EB;
+            color: white;
+            transform: scale(1.1);
+        }
+
+        .channel-item-btn-fix-dates.running {
+            animation: pulse-amber 1.1s ease-in-out infinite;
+        }
+
+        @keyframes pulse-amber {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(230, 81, 0, 0.5); }
+            50%      { box-shadow: 0 0 0 5px rgba(230, 81, 0, 0); }
+        }
+
+        /* ⭐ Fix-Dates per-channel progress bar — appears under the icon buttons */
+        .fix-dates-progress {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            margin-top: 4px;
+            justify-content: flex-end;
+            padding-right: 2px;
+        }
+
+        .fix-dates-progress.active {
+            display: flex;
+        }
+
+        .fix-dates-progress.done {
+            display: flex;
+        }
+
+        .fix-dates-progress-bar-track {
+            width: 60px;
+            height: 3px;
+            background: #e0e4ec;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .fix-dates-progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #e65100, #ff9800);
+            border-radius: 2px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .fix-dates-progress.done .fix-dates-progress-bar-fill {
+            background: linear-gradient(90deg, #16a34a, #4caf50);
+        }
+
+        .fix-dates-progress-text {
+            font-size: 10px;
+            color: #e65100;
+            font-weight: 600;
+            min-width: 70px;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .fix-dates-progress.done .fix-dates-progress-text {
+            color: #16a34a;
+        }
+
+        /* Channel meta text — amber while running, green when done */
+        .channel-item-meta.fix-dates-active {
+            color: #e65100;
+            font-weight: 600;
+        }
+
+        .channel-item-meta.fix-dates-done {
+            color: #16a34a;
+            font-weight: 600;
         }
         
         @keyframes spin {
@@ -850,12 +935,12 @@
         }
         
         .channel-item-btn-delete {
-            background: #ffebee;
-            color: #d32f2f;
+            background: #FEE2E2;
+            color: #EF4444;
         }
         
         .channel-item-btn-delete:hover {
-            background: #d32f2f;
+            background: #EF4444;
             color: white;
             transform: scale(1.1);
         }
@@ -2737,6 +2822,23 @@
                         <div class="refresh-progress-text" id="refreshAllProgressText"></div>
                     </div>
 
+                    <!-- ⭐ Fix All Dates — Add YouTube upload date suffix (_YY-MM-DD) to existing files -->
+                    <div style="margin-top: 10px; margin-bottom: 10px;">
+                        <button class="badge-refresh-youtube" id="fixAllDatesBtn"
+                                style="background: linear-gradient(90deg, #e65100, #ff9800); color: white;"
+                                onclick="fixDatesAllChannels()"
+                                title="Add YouTube upload date (_YY-MM-DD) to existing files in every channel + Single-File folder">
+                            📅 FIX ALL DATES
+                        </button>
+                    </div>
+                    <div class="refresh-progress-container" id="fixAllDatesProgress">
+                        <div class="refresh-progress-bar-track">
+                            <div class="refresh-progress-bar-fill" id="fixAllDatesProgressBar"
+                                 style="background: linear-gradient(90deg, #e65100, #ff9800);"></div>
+                        </div>
+                        <div class="refresh-progress-text" id="fixAllDatesProgressText"></div>
+                    </div>
+
                     <!-- Scrollable Channel List -->
                     <div class="channel-list-scroll" id="channelList">
                         <!-- Empty state -->
@@ -3189,25 +3291,39 @@
                     <div class="channel-item ${isActive ? 'active' : ''}" 
                          data-channel-id="${channel.id}" 
                          onclick="selectChannel('${channel.id}')">
-                        <div class="channel-item-icon">📺</div>
+                        <div class="channel-item-icon">🖥️</div>
                         <div class="channel-item-content">
-                            <div class="channel-item-name">${escapeHtml(channel.handle || channel.name)}</div>
-                            <div class="channel-item-meta" style="margin-top: 2px;">
+                            <div class="channel-item-name" title="${escapeHtml(channel.handle || channel.name)}">${escapeHtml(channel.handle || channel.name)}</div>
+                            <div class="channel-item-meta" id="channel-meta-${channel.id}">
                                 <span class="channel-item-videos">${downloaded}/${total} videos</span>
                             </div>
-                        </div>
-                        <div class="channel-item-actions">
-                            <button class="channel-item-btn channel-item-btn-refresh" 
-                                    id="refresh-btn-${channel.id}"
-                                    onclick="event.stopPropagation(); refreshChannel('${channel.id}')" 
-                                    title="Check YouTube for new videos">
-                                🔄
-                            </button>
-                            <button class="channel-item-btn channel-item-btn-delete" 
-                                    onclick="event.stopPropagation(); deleteChannel('${channel.id}')" 
-                                    title="Remove channel from list">
-                                🗑
-                            </button>
+                            <!-- ⭐ Fix-Dates per-channel progress bar (hidden by default) -->
+                            <div class="fix-dates-progress" id="fix-dates-progress-${channel.id}">
+                                <div class="fix-dates-progress-bar-track">
+                                    <div class="fix-dates-progress-bar-fill" id="fix-dates-progress-fill-${channel.id}"></div>
+                                </div>
+                                <span class="fix-dates-progress-text" id="fix-dates-progress-text-${channel.id}">0/0 (0%)</span>
+                            </div>
+                            <!-- ⭐ Action buttons row — full width below name + stats -->
+                            <div class="channel-item-actions">
+                                <button class="channel-item-btn channel-item-btn-fix-dates" 
+                                        id="fix-dates-btn-${channel.id}"
+                                        onclick="event.stopPropagation(); fixDatesChannel('${channel.id}')" 
+                                        title="Add YouTube upload date (_YY-MM-DD) to existing files in this channel">
+                                    📅
+                                </button>
+                                <button class="channel-item-btn channel-item-btn-refresh" 
+                                        id="refresh-btn-${channel.id}"
+                                        onclick="event.stopPropagation(); refreshChannel('${channel.id}')" 
+                                        title="Check YouTube for new videos">
+                                    🔄
+                                </button>
+                                <button class="channel-item-btn channel-item-btn-delete" 
+                                        onclick="event.stopPropagation(); deleteChannel('${channel.id}')" 
+                                        title="Remove channel from list">
+                                    🗑
+                                </button>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -3414,24 +3530,43 @@
             if (!confirm(`Remove "${channel.name}" from your channel list?`)) {
                 return;
             }
-            
-            // Remove from array
-            channels = channels.filter(ch => ch.id !== channelId);
-            
-            // If deleted channel was active, clear the view
-            if (activeChannelId === channelId) {
-                activeChannelId = null;
-                currentChannel = null;
-                videos = [];
-                document.getElementById('videosCard').style.display = 'none';
-                document.getElementById('currentChannelTitle').textContent = '@SelectChannel';
-            }
-            
-            // Re-render list
-            renderChannelList();
-            
-            showAlert(`Removed "${channel.name}" from list`, 'info', 3000);
-            addLogEntry(`🗑️ Removed channel: ${channel.name}`, 'info');
+
+            // ⭐ FIX: Actually call the server's DELETE endpoint so the channel
+            // is removed from savedChannels (in-memory) AND db_channels.json (disk).
+            // Without this, the channel would reappear on next page reload because
+            // the server still has it stored.
+            fetch(`${API_BASE}/api/channels/${channelId}`, { method: 'DELETE' })
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) {
+                        console.error('[Delete Channel] Server error:', data.error);
+                        showAlert(`❌ Delete failed: ${data.error || 'Unknown error'}`, 'error', 5000);
+                        return;
+                    }
+                    console.log('[Delete Channel] ✅ Server confirmed deletion');
+
+                    // Now safe to update local state
+                    channels = channels.filter(ch => ch.id !== channelId);
+
+                    // If deleted channel was active, clear the view
+                    if (activeChannelId === channelId) {
+                        activeChannelId = null;
+                        currentChannel = null;
+                        videos = [];
+                        document.getElementById('videosCard').style.display = 'none';
+                        document.getElementById('currentChannelTitle').textContent = '@SelectChannel';
+                    }
+
+                    // Re-render list
+                    renderChannelList();
+
+                    showAlert(`Removed "${channel.name}" from list`, 'info', 3000);
+                    addLogEntry(`🗑️ Removed channel: ${channel.name}`, 'info');
+                })
+                .catch(err => {
+                    console.error('[Delete Channel] Network error:', err);
+                    showAlert(`❌ Delete failed (network): ${err.message}`, 'error', 5000);
+                });
         }
 
         /**
@@ -4623,6 +4758,379 @@
                 showAlert(`⚠️ Refresh done with ${failedChannels} error(s)`, 'error', 4000);
             } else {
                 showAlert(`ℹ️ All channels are already up to date`, 'info', 3000);
+            }
+        }
+
+        // ==================== FIX-DATES FUNCTIONS ====================
+        //
+        // These functions add YouTube's upload date as a "_YY-MM-DD" suffix to
+        // existing files on disk (e.g. "MyVideo.mp4" → "MyVideo_23-11-15.mp4").
+        // They call SSE-streaming endpoints that send per-video progress events.
+        // The frontend uses fetch + ReadableStream (not EventSource) so we can
+        // use POST requests and stay within the existing auth session.
+
+        /**
+         * Internal: call a Fix-Dates SSE endpoint and dispatch events to callbacks.
+         * @param {string} url - Endpoint URL (POST)
+         * @param {object} handlers - { onChannelStart, onChannelDone, onProgress, onVideo, onStart, onDone, onComplete, onError }
+         * @returns {Promise<void>} Resolves when the SSE stream ends.
+         */
+        async function streamFixDatesSSE(url, handlers = {}) {
+            const {
+                onChannelStart = () => {},
+                onChannelDone  = () => {},
+                onProgress     = () => {},
+                onVideo        = () => {},
+                onStart        = () => {},
+                onDone         = () => {},
+                onComplete     = () => {},
+                onError        = () => {}
+            } = handlers;
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream'
+                }
+            });
+
+            if (!response.ok) {
+                const txt = await response.text().catch(() => '');
+                throw new Error(`HTTP ${response.status}: ${txt || response.statusText}`);
+            }
+            if (!response.body) {
+                throw new Error('ReadableStream not supported in this browser');
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                // SSE frames are separated by "\n\n"
+                let frameEnd;
+                while ((frameEnd = buffer.indexOf('\n\n')) >= 0) {
+                    const frame = buffer.slice(0, frameEnd);
+                    buffer = buffer.slice(frameEnd + 2);
+
+                    let eventName = 'message';
+                    let dataStr = '';
+                    for (const line of frame.split('\n')) {
+                        if (line.startsWith('event:')) {
+                            eventName = line.slice(6).trim();
+                        } else if (line.startsWith('data:')) {
+                            dataStr += line.slice(5).trim();
+                        } else if (line.startsWith(':')) {
+                            // Heartbeat comment — ignore
+                        }
+                    }
+                    if (!dataStr) continue;
+
+                    let data;
+                    try { data = JSON.parse(dataStr); }
+                    catch (e) { continue; }
+
+                    switch (eventName) {
+                        case 'start':         onStart(data); break;
+                        case 'channel_start': onChannelStart(data); break;
+                        case 'channel_done':  onChannelDone(data); break;
+                        case 'video':         onVideo(data); break;
+                        case 'progress':      onProgress(data); break;
+                        case 'done':          onDone(data); break;
+                        case 'complete':      onComplete(data); break;
+                        case 'error':         onError(data); break;
+                    }
+                }
+            }
+        }
+
+        /**
+         * Helper: update a channel card's fix-dates progress bar + meta text.
+         * Called by both fixDatesChannel and fixDatesAllChannels.
+         */
+        function updateChannelFixDatesProgress(channelId, processed, total, percentage, state) {
+            const bar = document.getElementById(`fix-dates-progress-${channelId}`);
+            const fill = document.getElementById(`fix-dates-progress-fill-${channelId}`);
+            const text = document.getElementById(`fix-dates-progress-text-${channelId}`);
+            const meta = document.getElementById(`channel-meta-${channelId}`);
+            const btn = document.getElementById(`fix-dates-btn-${channelId}`);
+
+            if (state === 'active') {
+                if (bar) { bar.classList.add('active'); bar.classList.remove('done'); }
+                if (fill) fill.style.width = percentage + '%';
+                if (text) text.textContent = `${processed}/${total} (${percentage}%)`;
+                if (meta) {
+                    meta.classList.add('fix-dates-active');
+                    meta.classList.remove('fix-dates-done');
+                    meta.innerHTML = `<span style="color:#e65100;font-weight:600;">Fix-Dates: ${processed}/${total} (${percentage}%)</span>`;
+                }
+                if (btn) {
+                    btn.classList.add('running');
+                    btn.disabled = true;
+                    btn.title = `Fix-Dates: ${processed}/${total} (${percentage}%)`;
+                }
+            } else if (state === 'done') {
+                if (bar) { bar.classList.add('done'); bar.classList.add('active'); }
+                if (fill) fill.style.width = '100%';
+                if (text) text.textContent = `✓ ${total}/${total}`;
+                if (meta) {
+                    meta.classList.remove('fix-dates-active');
+                    meta.classList.add('fix-dates-done');
+                }
+            } else if (state === 'reset') {
+                if (bar) { bar.classList.remove('active'); bar.classList.remove('done'); }
+                if (fill) fill.style.width = '0%';
+                if (text) text.textContent = '0/0 (0%)';
+                if (meta) {
+                    meta.classList.remove('fix-dates-active');
+                    meta.classList.remove('fix-dates-done');
+                    // Restore original meta HTML (downloaded/total videos)
+                    const ch = channels.find(c => c.id === channelId);
+                    if (ch) {
+                        const chVideos = ch.videos || [];
+                        const total = chVideos.length || ch.videoCount || 0;
+                        const downloaded = chVideos.filter(v =>
+                            v.downloadStatus === 'completed' || v.downloadStatus === 'skipped' || v.syncStatus === 'downloaded'
+                        ).length;
+                        meta.innerHTML = `<span class="channel-item-videos">${downloaded}/${total} videos</span>`;
+                    }
+                }
+                if (btn) {
+                    btn.classList.remove('running');
+                    btn.disabled = false;
+                    btn.title = 'Add YouTube upload date (_YY-MM-DD) to existing files in this channel';
+                }
+            }
+        }
+
+        /**
+         * Fix dates for ONE channel — fetches upload date for each video on disk
+         * in the channel folder and renames the file with _YY-MM-DD suffix.
+         * Uses parallel batch mode (~3-13s for a typical channel).
+         */
+        async function fixDatesChannel(channelId) {
+            const btn = document.getElementById(`fix-dates-btn-${channelId}`);
+            const channelObj = channels.find(ch => ch.id === channelId);
+            const channelName = channelObj ? (channelObj.name || channelObj.handle || channelId) : channelId;
+
+            // Show progress bar + activate meta text
+            updateChannelFixDatesProgress(channelId, 0, 0, 0, 'active');
+
+            addLogEntry(`📅 Fix-Dates starting for "${channelName}"… (parallel batch mode)`, 'info');
+            showAlert(`📅 Fixing dates for <strong>${escapeHtml(channelName)}</strong> — parallel batch mode (~250ms per video)…`, 'info', 6000);
+
+            try {
+                await streamFixDatesSSE(`${API_BASE}/api/channels/${channelId}/fix-dates`, {
+                    onStart: (d) => {
+                        addLogEntry(`📅 Channel "${channelName}": ${d.totalVideos} videos (${d.pendingCount} need lookup, ${d.alreadyStampedCount} already stamped, ${d.notOnDiskCount} not on disk)`, 'info');
+                        updateChannelFixDatesProgress(channelId, 0, d.totalVideos, 0, 'active');
+                    },
+                    onVideo: (d) => {
+                        if (d.status === 'renamed') {
+                            addLogEntry(`  ✅ <strong>${escapeHtml(d.title || d.videoId || '')}</strong> → ${escapeHtml(d.newFilename)}`, 'success');
+                        } else if (d.status === 'fetch_failed') {
+                            addLogEntry(`  ⚠️ <strong>${escapeHtml(d.title || d.videoId || '')}</strong> — could not fetch date`, 'warning');
+                        }
+                        // not_on_disk and already_stamped are quiet (too noisy)
+                    },
+                    onProgress: (d) => {
+                        updateChannelFixDatesProgress(channelId, d.processed, d.total, d.percentage, 'active');
+                    },
+                    onDone: (d) => {
+                        const msg = `📅 Channel "${channelName}": ${d.renamed} renamed, ${d.skippedAlready} already stamped, ${d.skippedMissing} not on disk, ${d.failed} failed`;
+                        addLogEntry(msg, d.failed > 0 ? 'warning' : 'success');
+                        showAlert(msg, d.failed > 0 ? 'warning' : 'success', 6000);
+
+                        // Show done state for 3 seconds, then reset
+                        updateChannelFixDatesProgress(channelId, d.processed, d.total, 100, 'done');
+                        if (d.renamed > 0) {
+                            const meta = document.getElementById(`channel-meta-${channelId}`);
+                            if (meta) {
+                                meta.innerHTML = `<span style="color:#16a34a;font-weight:600;">✓ ${d.renamed} dates added</span>`;
+                            }
+                        }
+                        setTimeout(() => {
+                            updateChannelFixDatesProgress(channelId, 0, 0, 0, 'reset');
+                        }, 3000);
+                    },
+                    onComplete: () => {
+                        // Final event — already handled by onDone
+                    },
+                    onError: (d) => {
+                        addLogEntry(`❌ Fix-Dates error for "${channelName}": ${d.message}`, 'error');
+                        showAlert(`❌ Fix-Dates error: ${d.message}`, 'error', 6000);
+                        updateChannelFixDatesProgress(channelId, 0, 0, 0, 'reset');
+                    }
+                });
+
+                // Re-fetch channels from server so the UI shows updated finalFilename
+                // (after the 3-second done state, to avoid destroying it)
+                setTimeout(async () => {
+                    try {
+                        const r = await fetch(`${API_BASE}/api/channels`);
+                        const d = await r.json();
+                        if (d.success && Array.isArray(d.channels)) {
+                            channels = d.channels;
+                            if (activeChannelId === channelId) {
+                                currentChannel = channels.find(ch => ch.id === channelId);
+                                videos = currentChannel ? (currentChannel.videos || []) : [];
+                                renderVideos();
+                                updateChannelStats();
+                            }
+                            // Don't call renderChannelList() — it would reset the progress UI.
+                            // The channel card meta is already correct from updateChannelFixDatesProgress('reset').
+                        }
+                    } catch (e) { /* non-fatal */ }
+                }, 3500);
+            } catch (err) {
+                console.error('[Fix-Dates] error:', err);
+                addLogEntry(`❌ Fix-Dates failed for "${channelName}": ${err.message}`, 'error');
+                showAlert(`❌ Fix-Dates failed: ${err.message}`, 'error', 6000);
+                updateChannelFixDatesProgress(channelId, 0, 0, 0, 'reset');
+            }
+        }
+
+        /**
+         * Fix dates for ALL channels + the Single-File folder.
+         * Uses the unified /api/files/fix-dates-all endpoint which streams
+         * per-channel + per-video progress.
+         * Updates BOTH the sidebar global progress bar AND each channel card's
+         * per-channel progress bar.
+         */
+        async function fixDatesAllChannels() {
+            if (channels.length === 0) {
+                showAlert('No channels to process', 'info', 3000);
+                return;
+            }
+
+            const btn = document.getElementById('fixAllDatesBtn');
+            const progressContainer = document.getElementById('fixAllDatesProgress');
+            const progressBar = document.getElementById('fixAllDatesProgressBar');
+            const progressText = document.getElementById('fixAllDatesProgressText');
+
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '📅 FIXING DATES…';
+            }
+            progressContainer.classList.add('active');
+            progressBar.style.width = '0%';
+
+            addLogEntry(`📅 Fix-Dates ALL starting — ${channels.length} channel(s) + Single-File folder (parallel batch mode)`, 'info');
+            showAlert(`📅 Fixing dates for <strong>ALL channels</strong> — parallel batch mode (~250ms per video, 4-way concurrent)`, 'info', 8000);
+
+            let totalRenamed = 0;
+            let totalFailed = 0;
+            const channelProgress = {};  // channelId → { processed, total }
+
+            try {
+                await streamFixDatesSSE(`${API_BASE}/api/files/fix-dates-all`, {
+                    onStart: (d) => {
+                        progressText.innerHTML = `Starting Fix-Dates on ${d.totalChannels} channel(s) + Single-File folder…`;
+                    },
+                    onChannelStart: (d) => {
+                        channelProgress[d.channelId] = { processed: 0, total: 0 };
+                        progressText.innerHTML = `Processing <span class="channel-name-highlight">${escapeHtml(d.channelName)}</span> (${d.index}/${d.total})…`;
+                        progressBar.style.width = Math.round(((d.index - 1) / d.total) * 100) + '%';
+
+                        // Activate this channel's per-channel progress bar
+                        if (d.channelId !== 'single-file') {
+                            updateChannelFixDatesProgress(d.channelId, 0, 0, 0, 'active');
+                        }
+                    },
+                    onChannelDone: (d) => {
+                        totalRenamed += d.renamed || 0;
+                        totalFailed += d.failed || 0;
+                        const summary = `${d.renamed}✓ ${d.failed}✗`;
+                        addLogEntry(`  ${d.channelName}: ${summary} (renamed ${d.renamed}, failed ${d.failed})`,
+                                    d.failed > 0 ? 'warning' : 'success');
+
+                        // Show done state on this channel's progress bar for 3s, then reset
+                        if (d.channelId !== 'single-file') {
+                            updateChannelFixDatesProgress(d.channelId, d.processed, d.total, 100, 'done');
+                            if (d.renamed > 0) {
+                                const meta = document.getElementById(`channel-meta-${d.channelId}`);
+                                if (meta) {
+                                    meta.innerHTML = `<span style="color:#16a34a;font-weight:600;">✓ ${d.renamed} dates added</span>`;
+                                }
+                            }
+                            setTimeout(() => {
+                                updateChannelFixDatesProgress(d.channelId, 0, 0, 0, 'reset');
+                            }, 3000);
+                        }
+                    },
+                    onVideo: (d) => {
+                        if (d.status === 'renamed') {
+                            addLogEntry(`    ✅ ${escapeHtml(d.title || d.videoId || d.filename || '')} → ${escapeHtml(d.newFilename)}`, 'success');
+                        } else if (d.status === 'fetch_failed' || d.status === 'rename_failed') {
+                            addLogEntry(`    ⚠️ ${escapeHtml(d.title || d.filename || d.videoId || '')} — ${d.message}`, 'warning');
+                        }
+                    },
+                    onProgress: (d) => {
+                        // Update per-channel progress bar
+                        if (d.channelId && d.channelId !== 'single-file') {
+                            updateChannelFixDatesProgress(d.channelId, d.processed, d.total, d.percentage, 'active');
+                        }
+
+                        // Update global sidebar progress bar (average across all channels)
+                        if (d.channelId) {
+                            channelProgress[d.channelId] = { processed: d.processed, total: d.total };
+                        }
+                        const totals = Object.values(channelProgress);
+                        if (totals.length > 0) {
+                            const sumPct = totals.reduce((s, p) => s + (p.total > 0 ? (p.processed / p.total) * 100 : 0), 0);
+                            const avgPct = Math.round(sumPct / totals.length);
+                            progressBar.style.width = avgPct + '%';
+                        }
+                    },
+                    onDone: (d) => {
+                        progressText.innerHTML = `Done — <span class="new-count">${d.renamed} renamed</span>, ${d.failed} failed`;
+                    },
+                    onComplete: (d) => {
+                        progressBar.style.width = '100%';
+                        const msg = `📅 Fix-Dates complete: ${d.totalRenamed} file(s) renamed, ${d.totalFailed} failed`;
+                        progressText.innerHTML = `Done — <span class="new-count">${d.totalRenamed} renamed</span>${d.totalFailed > 0 ? `, <span style="color:#d32f2f">${d.totalFailed} failed</span>` : ''}`;
+                        addLogEntry(msg, d.totalFailed > 0 ? 'warning' : 'success');
+                        showAlert(msg, d.totalFailed > 0 ? 'warning' : 'success', 6000);
+
+                        // Re-fetch channels from server so UI shows updated finalFilename
+                        // (after a short delay to let per-channel done states finish)
+                        setTimeout(() => {
+                            fetch(`${API_BASE}/api/channels`).then(r => r.json()).then(d => {
+                                if (d.success && Array.isArray(d.channels)) {
+                                    channels = d.channels;
+                                    if (activeChannelId) {
+                                        currentChannel = channels.find(ch => ch.id === activeChannelId);
+                                        videos = currentChannel ? (currentChannel.videos || []) : [];
+                                        renderVideos();
+                                        updateChannelStats();
+                                    }
+                                }
+                            }).catch(() => {});
+                        }, 4000);
+                    },
+                    onError: (d) => {
+                        addLogEntry(`❌ Fix-Dates error: ${d.message}`, 'error');
+                        showAlert(`❌ Fix-Dates error: ${d.message}`, 'error', 6000);
+                    }
+                });
+            } catch (err) {
+                console.error('[Fix-Dates All] error:', err);
+                addLogEntry(`❌ Fix-Dates All failed: ${err.message}`, 'error');
+                showAlert(`❌ Fix-Dates All failed: ${err.message}`, 'error', 6000);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '📅 FIX ALL DATES';
+                }
+                setTimeout(() => {
+                    progressContainer.classList.remove('active');
+                    progressBar.style.width = '0%';
+                }, 10000);
             }
         }
 
