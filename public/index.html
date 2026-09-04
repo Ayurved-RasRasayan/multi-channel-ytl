@@ -347,6 +347,42 @@
             transform: translateY(-1px);
             box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
         }
+
+        /* Channel Sync Progress Container */
+        .channel-sync-progress-box {
+            margin: 6px 0;
+            padding: 8px 10px;
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .channel-sync-progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 600;
+            color: #059669;
+            margin-bottom: 5px;
+        }
+
+        .channel-sync-progress-track {
+            width: 100%;
+            height: 6px;
+            background: rgba(16, 185, 129, 0.2);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .channel-sync-progress-fill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #059669);
+            transition: width 0.2s ease;
+            border-radius: 3px;
+        }
         
         /* Scrollable Channel List */
         .channel-list-scroll {
@@ -2252,7 +2288,7 @@
                                 CHANNEL:<span id="totalChannelsCount">0</span>
                             </div>
                             <div style="display: flex; gap: 3px; align-items: center;">
-                                <button class="sidebar-badge-btn badge-sync-all" onclick="syncDownloadStatus()" title="Sync all channels">
+                                <button class="sidebar-badge-btn badge-sync-all" id="sidebarSyncAllBtn" onclick="syncDownloadStatus()" title="Sync all channels">
                                     SYNC ALL
                                 </button>
                                 <button class="sidebar-badge-btn badge-download-all" onclick="downloadAllChannels()" title="Download videos from all channels">
@@ -2270,6 +2306,17 @@
                         </div>
                     </div>
                     
+                    <!-- Channel Sync Progress Container -->
+                    <div class="channel-sync-progress-box" id="channelSyncProgressContainer" style="display: none;">
+                        <div class="channel-sync-progress-header">
+                            <span id="channelSyncProgressText">🔄 Syncing: 0/0</span>
+                            <span id="channelSyncProgressPercent">0%</span>
+                        </div>
+                        <div class="channel-sync-progress-track">
+                            <div class="channel-sync-progress-fill" id="channelSyncProgressBar"></div>
+                        </div>
+                    </div>
+
                     <!-- Scrollable Channel List -->
                     <div class="channel-list-scroll" id="channelList">
                         <!-- Empty state -->
@@ -3634,80 +3681,149 @@
             const btn = document.getElementById('syncBtn');
             const icon = document.getElementById('syncBtnIcon');
             const text = document.getElementById('syncBtnText');
+            const sidebarBtn = document.getElementById('sidebarSyncAllBtn');
             
+            const progressContainer = document.getElementById('channelSyncProgressContainer');
+            const progressText = document.getElementById('channelSyncProgressText');
+            const progressPercent = document.getElementById('channelSyncProgressPercent');
+            const progressBar = document.getElementById('channelSyncProgressBar');
+
             if (btn) {
                 btn.disabled = true;
                 if (icon) icon.innerHTML = '<span class="sync-spinner"></span>';
                 if (text) text.textContent = 'Syncing All...';
             }
-            
-            addLogEntry('🔄 Starting sync check for all channels...', 'info');
-            
-            try {
-                const response = await fetch(`${API_BASE}/api/channels/sync-all`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ channels: channels })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success && data.results) {
-                    Object.keys(data.results).forEach(channelId => {
-                        const channelResult = data.results[channelId];
-                        const channelObj = channels.find(ch => ch.id === channelId);
+            if (sidebarBtn) {
+                sidebarBtn.disabled = true;
+                sidebarBtn.textContent = 'Syncing...';
+            }
 
-                        if (channelObj) {
+            if (progressContainer) {
+                progressContainer.style.display = 'block';
+                if (progressPercent) progressPercent.textContent = '0%';
+                if (progressBar) progressBar.style.width = '0%';
+            }
+
+            addLogEntry('🔄 Starting sync check for all channels...', 'info');
+
+            const total = channels.length;
+            if (total === 0) {
+                if (progressText) progressText.textContent = 'No channels loaded to sync';
+                if (progressPercent) progressPercent.textContent = '0%';
+                if (progressBar) progressBar.style.width = '0%';
+                
+                setTimeout(() => {
+                    if (progressContainer) progressContainer.style.display = 'none';
+                    if (sidebarBtn) {
+                        sidebarBtn.disabled = false;
+                        sidebarBtn.textContent = 'SYNC ALL';
+                    }
+                    if (btn) {
+                        btn.disabled = false;
+                        if (icon) icon.textContent = '🔄';
+                        if (text) text.textContent = 'Sync Status';
+                    }
+                }, 1500);
+                return;
+            }
+
+            try {
+                let completedCount = 0;
+
+                for (let i = 0; i < total; i++) {
+                    const channelObj = channels[i];
+                    const chName = channelObj.name || channelObj.youtubeId || `Channel ${i + 1}`;
+
+                    if (progressText) {
+                        progressText.textContent = `🔄 Syncing (${i + 1}/${total}): ${chName}`;
+                    }
+
+                    try {
+                        const response = await fetch(`${API_BASE}/api/channels/${channelObj.id}/sync`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        const data = await response.json();
+
+                        if (data.success && (data.videoStatuses || data.videos)) {
                             const targetVideos = channelObj.videos || (channelObj.data && channelObj.data.videos) || [];
-                            if (channelResult.videoStatuses) {
-                                channelResult.videoStatuses.forEach(status => {
-                                    const video = targetVideos.find(v => (v.id || v.videoId) === status.videoId);
-                                    if (video) {
-                                        video.syncStatus = status.exists ? 'downloaded' : 'new';
-                                        if (status.filename) {
-                                            video.finalFilename = status.filename;
-                                            video.filePath = status.filePath;
-                                        }
-                                        if (status.exists) {
-                                            video.downloadStatus = 'completed';
-                                        } else {
-                                            if (video.downloadStatus === 'completed') {
-                                                video.downloadStatus = null;
-                                            }
-                                        }
+                            const videoStatuses = data.videoStatuses || [];
+
+                            videoStatuses.forEach(status => {
+                                const video = targetVideos.find(v => (v.id || v.videoId) === status.videoId);
+                                if (video) {
+                                    video.syncStatus = status.exists ? 'downloaded' : 'new';
+                                    if (status.filename) {
+                                        video.finalFilename = status.filename;
+                                        video.filePath = status.filePath;
                                     }
-                                });
+                                    if (status.exists) {
+                                        video.downloadStatus = 'completed';
+                                    } else if (video.downloadStatus === 'completed') {
+                                        video.downloadStatus = null;
+                                    }
+                                }
+                            });
+
+                            if (currentChannel && currentChannel.id === channelObj.id) {
+                                syncData = data;
                             }
                         }
-                    });
-
-                    saveChannels();
-
-                    if (currentChannel && data.results[currentChannel.id]) {
-                        syncData = data.results[currentChannel.id];
-                        document.getElementById('syncStatsBar').style.display = 'flex';
+                    } catch (chError) {
+                        console.warn(`[Sync All] Failed syncing channel ${channelObj.id}:`, chError);
                     }
+
+                    completedCount++;
+                    const pct = Math.round((completedCount / total) * 100);
+
+                    if (progressPercent) progressPercent.textContent = `${pct}%`;
+                    if (progressBar) progressBar.style.width = `${pct}%`;
+                    if (sidebarBtn) sidebarBtn.textContent = `${completedCount}/${total} (${pct}%)`;
 
                     renderChannelList();
                     updateChannelStats();
-                    renderVideos();
-                    
-                    showAlert(`✅ Sync complete for all channels`, 'success', 4000);
-                    addLogEntry(`✅ Sync complete for all channels`, 'success');
-                    
-                    startSyncTimer();
-                } else {
-                    throw new Error(data.error || 'Sync all failed');
                 }
+
+                saveChannels();
+
+                if (currentChannel) {
+                    const syncStatsBar = document.getElementById('syncStatsBar');
+                    if (syncStatsBar) syncStatsBar.style.display = 'flex';
+                    renderVideos();
+                }
+
+                if (progressText) {
+                    progressText.textContent = `✅ Sync complete for ${total} channel(s)`;
+                }
+                if (progressPercent) progressPercent.textContent = '100%';
+                if (progressBar) progressBar.style.width = '100%';
+
+                showAlert(`✅ Sync complete for all ${total} channels`, 'success', 3000);
+                addLogEntry(`✅ Sync complete for all ${total} channels`, 'success');
+
+                startSyncTimer();
+
+                setTimeout(() => {
+                    if (progressContainer) progressContainer.style.display = 'none';
+                }, 3000);
+
             } catch (error) {
                 console.error('[Sync All] Error:', error);
+                if (progressText) progressText.textContent = `❌ Sync failed: ${error.message}`;
                 showAlert(`❌ Sync failed: ${error.message}`, 'error', 5000);
                 addLogEntry(`❌ Sync failed: ${error.message}`, 'error');
+                setTimeout(() => {
+                    if (progressContainer) progressContainer.style.display = 'none';
+                }, 3000);
             } finally {
                 if (btn) {
                     btn.disabled = false;
                     if (icon) icon.textContent = '🔄';
                     if (text) text.textContent = 'Sync Status';
+                }
+                if (sidebarBtn) {
+                    sidebarBtn.disabled = false;
+                    sidebarBtn.textContent = 'SYNC ALL';
                 }
             }
         }
