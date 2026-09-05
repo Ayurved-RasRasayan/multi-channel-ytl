@@ -928,6 +928,64 @@
             color: #16a34a;
             font-weight: 600;
         }
+
+        /* ⭐ Sync progress bar — below Sync Status button, blue theme */
+        .sync-progress-container {
+            display: none;
+            width: 100%;
+            margin-top: 6px;
+            margin-bottom: 4px;
+        }
+
+        .sync-progress-container.active {
+            display: block;
+        }
+
+        .sync-progress-bar-track {
+            width: 100%;
+            height: 5px;
+            background: #E0E4EC;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .sync-progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #2563EB, #60A5FA);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .sync-progress-text {
+            font-size: 11px;
+            color: #2563EB;
+            font-weight: 600;
+            margin-top: 3px;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Per-channel card flash — brief green highlight when sync finishes for that channel */
+        @keyframes sync-flash {
+            0%   { background: #DCFCE7; }
+            100% { background: #fafafa; }
+        }
+
+        .channel-item.sync-flash {
+            animation: sync-flash 1s ease-out;
+        }
+
+        .channel-item.active.sync-flash {
+            animation: sync-flash-active 1s ease-out;
+        }
+
+        @keyframes sync-flash-active {
+            0%   { background: #BBF7D0; }
+            100% { background: linear-gradient(135deg, #e8eaf6 0%, #c5cae9 100%); }
+        }
         
         @keyframes spin {
             from { transform: rotate(0deg); }
@@ -2895,6 +2953,14 @@
                         </div>
                     </div>
 
+                    <!-- ⭐ Sync progress bar (shown while sync is running) -->
+                    <div class="sync-progress-container" id="syncProgress">
+                        <div class="sync-progress-bar-track">
+                            <div class="sync-progress-bar-fill" id="syncProgressBar"></div>
+                        </div>
+                        <div class="sync-progress-text" id="syncProgressText">Syncing…</div>
+                    </div>
+
                     <!-- Sync Statistics Filter Buttons (hidden until first sync) -->
                     <div class="sync-stats-bar" id="syncStatsBar" style="display: none;">
                         <button class="sync-filter-btn btn-all active" onclick="setSyncFilter('all')" id="btnFilterAll">
@@ -2962,6 +3028,7 @@
                                 <button class="log-tab" onclick="switchLogTab('server')" id="tabServer">🖥️ Server Terminal (<span id="serverLogCount">0</span>)</button>
                             </div>
                             <div style="display: flex; gap: 5px;">
+                                <button class="log-toggle" onclick="copyLogs()" title="Copy current log to clipboard">📋 Copy</button>
                                 <button class="log-toggle" onclick="toggleLogPanel()" title="Collapse/Expand">Toggle</button>
                                 <button class="log-toggle" onclick="clearLogs()" title="Clear current log">Clear</button>
                             </div>
@@ -3619,16 +3686,25 @@
         /**
          * Download all remaining (unsynced/undownloaded) videos from all channels
          */
+        let _downloadAllChannelsInProgress = false;   // ⭐ Prevent concurrent downloadAllChannels() calls
+
         async function downloadAllChannels() {
+            // ⭐ GUARD: Prevent concurrent calls to downloadAllChannels()
+            if (_downloadAllChannelsInProgress) {
+                console.log('[Download All Channels] ⚠️ Already in progress, ignoring duplicate click');
+                return;
+            }
+
             if (channels.length === 0) {
                 showAlert('No channels to download', 'warning');
                 return;
             }
-            
+
             if (!confirm(`Start downloading all remaining unsynced videos from all ${channels.length} channels?`)) {
                 return;
             }
-            
+
+            _downloadAllChannelsInProgress = true;
             showAlert(`⬇️ Queuing remaining videos across all channels...`, 'info', 5000);
             addLogEntry(`⬇️ Starting download for all unsynced/remaining videos in all channels`, 'info');
             
@@ -3719,6 +3795,9 @@
             if (errorCount > 0) {
                 showAlert(`⚠️ ${errorCount} videos failed to queue`, 'warning');
             }
+
+            // ⭐ Release the guard so the user can click "Download All Channels" again later
+            _downloadAllChannelsInProgress = false;
         }
         
         /**
@@ -4063,6 +4142,91 @@
                         lastServerLogTime = null;
                     })
                     .catch(err => console.error('Error clearing logs:', err));
+            }
+        }
+
+        /**
+         * ⭐ Copy current log tab to clipboard.
+         * For Server Terminal: fetches full logs from /api/logs (avoids the 200-char
+         * truncation that renderServerLogs applies for display).
+         * For Download Log: copies the in-memory downloadLog array verbatim.
+         * Falls back to a temporary <textarea> + execCommand('copy') if the modern
+         * navigator.clipboard API is unavailable (e.g. non-HTTPS context).
+         */
+        async function copyLogs() {
+            let textToCopy = '';
+            const tabLabel = currentLogTab === 'download' ? 'Download Log' : 'Server Terminal';
+
+            try {
+                if (currentLogTab === 'download') {
+                    // Copy the in-memory download log (full, untruncated)
+                    if (downloadLog.length === 0) {
+                        showAlert('📋 Download log is empty', 'info', 2500);
+                        return;
+                    }
+                    textToCopy = downloadLog.map(entry =>
+                        `[${entry.time}] ${entry.type.toUpperCase()}: ${entry.message}`
+                    ).join('\n');
+                } else {
+                    // Server terminal — fetch fresh from /api/logs (full, untruncated)
+                    const params = new URLSearchParams();
+                    if (lastServerLogTime) {
+                        params.append('since', lastServerLogTime);
+                    } else {
+                        // Fetch the latest 500 lines (server caps at 500)
+                        params.append('limit', '500');
+                    }
+                    const r = await fetch(`${API_BASE}/api/logs?${params.toString()}`);
+                    const data = await r.json();
+                    if (!data.success || !Array.isArray(data.logs) || data.logs.length === 0) {
+                        showAlert('📋 Server log is empty', 'info', 2500);
+                        return;
+                    }
+                    textToCopy = data.logs.map(log => {
+                        const t = new Date(log.time).toLocaleTimeString();
+                        const msg = log.message || '';
+                        return `[${t}] ${(log.type || 'info').toUpperCase()}: ${msg}`;
+                    }).join('\n');
+                }
+
+                // Copy to clipboard (with fallback for non-HTTPS contexts)
+                let copied = false;
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(textToCopy);
+                        copied = true;
+                    }
+                } catch (e) {
+                    console.warn('[Copy Logs] navigator.clipboard failed, falling back:', e.message);
+                }
+
+                if (!copied) {
+                    // Fallback: use a hidden textarea + execCommand('copy')
+                    const textarea = document.createElement('textarea');
+                    textarea.value = textToCopy;
+                    textarea.style.position = 'fixed';
+                    textarea.style.top = '-9999px';
+                    textarea.style.left = '-9999px';
+                    textarea.style.opacity = '0';
+                    document.body.appendChild(textarea);
+                    textarea.focus();
+                    textarea.select();
+                    copied = document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                }
+
+                if (copied) {
+                    const lineCount = textToCopy.split('\n').length;
+                    const charCount = textToCopy.length;
+                    showAlert(`📋 Copied ${lineCount} lines (${charCount} chars) from ${tabLabel} to clipboard`,
+                              'success', 3000);
+                    addLogEntry(`📋 Copied ${lineCount} lines from ${tabLabel}`, 'success');
+                } else {
+                    showAlert('❌ Copy failed — clipboard not available', 'error', 4000);
+                }
+            } catch (err) {
+                console.error('[Copy Logs] Error:', err);
+                showAlert(`❌ Copy failed: ${err.message}`, 'error', 4000);
             }
         }
 
@@ -4770,12 +4934,27 @@
         // use POST requests and stay within the existing auth session.
 
         /**
-         * Internal: call a Fix-Dates SSE endpoint and dispatch events to callbacks.
+         * Internal: call an SSE endpoint and dispatch events to callbacks.
+         * Supports both 2-arg (legacy) and 3-arg calling conventions:
+         *   streamFixDatesSSE(url, handlers)                ← legacy (no body)
+         *   streamFixDatesSSE(url, fetchOptions, handlers)  ← with body/headers
          * @param {string} url - Endpoint URL (POST)
-         * @param {object} handlers - { onChannelStart, onChannelDone, onProgress, onVideo, onStart, onDone, onComplete, onError }
+         * @param {object} [fetchOptionsOrHandlers] - Fetch options OR handlers (2-arg form)
+         * @param {object} [handlers] - Event handlers (3-arg form)
          * @returns {Promise<void>} Resolves when the SSE stream ends.
          */
-        async function streamFixDatesSSE(url, handlers = {}) {
+        async function streamFixDatesSSE(url, fetchOptionsOrHandlers = {}, handlers = {}) {
+            // Detect 2-arg vs 3-arg calling convention
+            let fetchOptions = {};
+            if (fetchOptionsOrHandlers && (fetchOptionsOrHandlers.onStart || fetchOptionsOrHandlers.onChannelStart || fetchOptionsOrHandlers.onDone)) {
+                // 2-arg form: 2nd param is handlers
+                handlers = fetchOptionsOrHandlers;
+                fetchOptions = {};
+            } else {
+                // 3-arg form: 2nd param is fetch options, 3rd is handlers
+                fetchOptions = fetchOptionsOrHandlers || {};
+            }
+
             const {
                 onChannelStart = () => {},
                 onChannelDone  = () => {},
@@ -4785,15 +4964,15 @@
                 onDone         = () => {},
                 onComplete     = () => {},
                 onError        = () => {}
-            } = handlers;
+            } = handlers || {};
 
-            const response = await fetch(url, {
+            const response = await fetch(url, Object.assign({
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Accept': 'text/event-stream'
                 }
-            });
+            }, fetchOptions));
 
             if (!response.ok) {
                 const txt = await response.text().catch(() => '');
@@ -4844,6 +5023,7 @@
                         case 'done':          onDone(data); break;
                         case 'complete':      onComplete(data); break;
                         case 'error':         onError(data); break;
+                        case 'retry':         if (handlers.onRetry) handlers.onRetry(data); break;
                     }
                 }
             }
@@ -4940,6 +5120,10 @@
                     },
                     onProgress: (d) => {
                         updateChannelFixDatesProgress(channelId, d.processed, d.total, d.percentage, 'active');
+                    },
+                    onRetry: (d) => {
+                        addLogEntry(`🔄 YouTube rate-limited — retry round ${d.round}: ${d.remaining} videos to re-fetch...`, 'info');
+                        showAlert(`🔄 Rate-limited by YouTube — auto-retrying ${d.remaining} videos (round ${d.round})...`, 'info', 5000);
                     },
                     onDone: (d) => {
                         const msg = `📅 Channel "${channelName}": ${d.renamed} renamed, ${d.skippedAlready} already stamped, ${d.skippedMissing} not on disk, ${d.failed} failed`;
@@ -5087,6 +5271,9 @@
                             progressBar.style.width = avgPct + '%';
                         }
                     },
+                    onRetry: (d) => {
+                        addLogEntry(`  🔄 YouTube rate-limited — retry round ${d.round}: ${d.remaining} videos to re-fetch...`, 'info');
+                    },
                     onDone: (d) => {
                         progressText.innerHTML = `Done — <span class="new-count">${d.renamed} renamed</span>, ${d.failed} failed`;
                     },
@@ -5138,24 +5325,81 @@
             const btn = document.getElementById('syncBtn');
             const icon = document.getElementById('syncBtnIcon');
             const text = document.getElementById('syncBtnText');
-            
+            const progressBar = document.getElementById('syncProgressBar');
+            const progressContainer = document.getElementById('syncProgress');
+            const progressText = document.getElementById('syncProgressText');
+
             if (btn) {
                 btn.disabled = true;
                 if (icon) icon.innerHTML = '<span class="sync-spinner"></span>';
-                if (text) text.textContent = 'Syncing All...';
+                if (text) text.textContent = 'Syncing…';
             }
-            
+            if (progressContainer) progressContainer.classList.add('active');
+            if (progressBar) progressBar.style.width = '0%';
+            if (progressText) progressText.textContent = 'Starting sync…';
+
             addLogEntry('🔄 Starting sync check for all channels...', 'info');
-            
+
             try {
-                const response = await fetch(`${API_BASE}/api/channels/sync-all`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ channels: channels })
+                // ⭐ NEW: Use the streaming endpoint so we get per-channel progress events.
+                // Falls back to processing the final 'done' event which contains the
+                // complete results object (same shape as the old non-streaming endpoint).
+                const finalResult = await new Promise((resolve, reject) => {
+                    streamFixDatesSSE(`${API_BASE}/api/channels/sync-all-stream`, {
+                        body: JSON.stringify({ channels: channels }),
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    }, {
+                        onStart: (d) => {
+                            if (progressText) progressText.textContent = `Syncing 0/${d.totalChannels} channels…`;
+                            addLogEntry(`🔄 Syncing ${d.totalChannels} channel(s)…`, 'info');
+                        },
+                        onChannelStart: (d) => {
+                            if (text) text.textContent = `Syncing ${d.index}/${d.total}…`;
+                            if (progressText) {
+                                progressText.innerHTML = `Syncing <strong>${escapeHtml(d.channelName)}</strong> (${d.index}/${d.total})…`;
+                            }
+                            if (progressBar) {
+                                const pct = Math.round(((d.index - 1) / d.total) * 100);
+                                progressBar.style.width = pct + '%';
+                            }
+                        },
+                        onChannelDone: (d) => {
+                            if (progressBar) progressBar.style.width = d.percentage + '%';
+                            addLogEntry(`  ✅ ${escapeHtml(d.channelName)}: ${d.downloaded}/${d.totalVideos} downloaded`,
+                                        d.downloaded > 0 ? 'success' : 'info');
+
+                            // ⭐ Brief green flash on the channel card that just finished
+                            const card = document.querySelector(`.channel-item[data-channel-id="${d.channelId}"]`);
+                            if (card) {
+                                card.classList.remove('sync-flash');
+                                // Force reflow so the animation restarts
+                                void card.offsetWidth;
+                                card.classList.add('sync-flash');
+                                setTimeout(() => card.classList.remove('sync-flash'), 1100);
+                            }
+                        },
+                        onProgress: (d) => {
+                            if (progressBar) progressBar.style.width = d.percentage + '%';
+                            if (progressText) progressText.textContent = `${d.message}`;
+                        },
+                        onDone: (d) => {
+                            if (progressBar) progressBar.style.width = '100%';
+                            if (progressText) progressText.textContent = d.message;
+                        },
+                        onComplete: (d) => {
+                            // 'complete' event carries the final results object (same shape
+                            // as the old non-streaming endpoint's response)
+                            resolve(d);
+                        },
+                        onError: (d) => {
+                            reject(new Error(d.message || 'Sync failed'));
+                        }
+                    }).catch(reject);
                 });
-                
-                const data = await response.json();
-                
+
+                // Process the results (same logic as before — just sourced from the SSE stream)
+                const data = finalResult;
                 if (data.success && data.results) {
                     Object.keys(data.results).forEach(channelId => {
                         const channelResult = data.results[channelId];
@@ -5195,10 +5439,10 @@
                     renderChannelList();
                     updateChannelStats();
                     renderVideos();
-                    
+
                     showAlert(`✅ Sync complete for all channels`, 'success', 4000);
                     addLogEntry(`✅ Sync complete for all channels`, 'success');
-                    
+
                     startSyncTimer();
                 } else {
                     throw new Error(data.error || 'Sync all failed');
@@ -5213,6 +5457,11 @@
                     if (icon) icon.textContent = '🔄';
                     if (text) text.textContent = 'Sync Status';
                 }
+                // Hide progress bar after a short delay so user sees the 100% fill
+                setTimeout(() => {
+                    if (progressContainer) progressContainer.classList.remove('active');
+                    if (progressBar) progressBar.style.width = '0%';
+                }, 1500);
             }
         }
         
@@ -5316,10 +5565,18 @@
         
         async function downloadVideo(index) {
             const video = videos[index];
-            
+
+            // ⭐ FIX: Prevent duplicate downloads — if this video is already
+            // downloading or queued, don't fire another request. This stops
+            // the "8 parallel requests" problem at the source (the frontend).
+            if (video.downloadStatus === 'downloading' || video.downloadStatus === 'queued') {
+                console.log(`[Download] ⚠️ Video already ${video.downloadStatus}, ignoring duplicate click`);
+                return;
+            }
+
             video.downloadStatus = 'downloading';
             video.progress = 0;
-            
+
             addLogEntry(`▶️ Starting download: "${(video.displayTitle || video.title).substring(0, 40)}..."`, 'info');
             renderVideos();
 
@@ -5382,10 +5639,22 @@
             }
         }
 
+        let _downloadSelectedInProgress = false;   // ⭐ Prevent concurrent downloadSelected() calls
+
         async function downloadSelected() {
+            // ⭐ GUARD: Prevent concurrent calls to downloadSelected()
+            if (_downloadSelectedInProgress) {
+                console.log('[Download Selected] ⚠️ Already in progress, ignoring duplicate click');
+                return;
+            }
+            _downloadSelectedInProgress = true;
+
             const selection = getActiveSelection();
-            if (selection.size === 0) return;
-            
+            if (selection.size === 0) {
+                _downloadSelectedInProgress = false;
+                return;
+            }
+
             const btn = document.getElementById('downloadSelectedBtn');
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Queuing...';
@@ -5449,9 +5718,23 @@
             }
 
             startPolling();
+
+            // ⭐ Release the guard so the user can click "Download Selected" again later
+            _downloadSelectedInProgress = false;
         }
 
+        let _downloadAllInProgress = false;   // ⭐ Module-level flag to prevent concurrent downloadAll() calls
+
         async function downloadAll() {
+            // ⭐ GUARD: Prevent concurrent calls to downloadAll() — if the user
+            // clicks "Download All" multiple times rapidly, only the first call
+            // proceeds. Subsequent calls return immediately.
+            if (_downloadAllInProgress) {
+                console.log('[Download All] ⚠️ Already in progress, ignoring duplicate click');
+                return;
+            }
+            _downloadAllInProgress = true;
+
             const btn = document.getElementById('downloadAllBtn');
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Queuing...';
@@ -5523,6 +5806,9 @@
             if (errorCount > 0) {
                 showAlert(`⚠️ ${errorCount} videos failed to queue`, 'warning');
             }
+
+            // ⭐ Release the guard so the user can click "Download All" again later
+            _downloadAllInProgress = false;
         }
 
         function clearCompleted() {

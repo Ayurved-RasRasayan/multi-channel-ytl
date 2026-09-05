@@ -177,100 +177,515 @@ function getNativeCookiePath() {
 
 /**
  * Check if cookies.txt exists and appears valid - WITH DETAILED LOGGING
+ * @param {boolean} [verbose=true] - If true, logs detailed validation info. Pass false
+ *        for internal calls (e.g. from download path) to avoid log spam when called
+ *        multiple times per download. The result is also cached on the file's mtime
+ *        so subsequent calls within the same server lifetime are O(1).
  * @returns {boolean} true if cookies.txt can be used
  */
-function isCookiesFileValid() {
-    console.log('\n[isCookiesFileValid] Starting validation...');
+let _cookiesValidCache = null;   // { mtime: number, size: number, result: boolean }
+
+function isCookiesFileValid(verbose = true) {
     const cookiePath = AUTH_CONFIG.cookieFilePath;
-    console.log('[isCookiesFileValid] Checking path:', cookiePath);
-    
-    // Check if path is defined
+
     if (!cookiePath) {
-        console.log('[isCookiesFileValid] ❌ FAIL: Cookie path is undefined/null!');
+        if (verbose) console.log('[isCookiesFileValid] FAIL: Cookie path is undefined/null');
         return false;
     }
-    
+
+    // ⭐ Cache: skip re-validation if file hasn't changed (mtime + size match).
+    // Without this, the download path calls isCookiesFileValid() 3+ times per
+    // download (once per cookie strategy), each producing 15+ lines of log spam.
+    try {
+        const stats = fs.statSync(cookiePath);
+        if (_cookiesValidCache &&
+            _cookiesValidCache.mtime === stats.mtimeMs &&
+            _cookiesValidCache.size === stats.size) {
+            // Cached result — return without re-logging
+            return _cookiesValidCache.result;
+        }
+    } catch (e) {
+        if (verbose) console.log('[isCookiesFileValid] FAIL: Cannot stat file:', e.message);
+        return false;
+    }
+
+    if (verbose) console.log('\n[isCookiesFileValid] Starting validation...');
+    if (verbose) console.log('[isCookiesFileValid] Checking path:', cookiePath);
+
     // Check if file exists
-    console.log('[isCookiesFileValid] Checking if file exists...');
     const exists = fs.existsSync(cookiePath);
-    console.log('[isCookiesFileValid] File exists?', exists);
-    
+    if (verbose) console.log('[isCookiesFileValid] File exists?', exists);
+
     if (!exists) {
-        console.log('[isCookiesFileValid] ❌ FAIL: File does not exist:', cookiePath);
-        console.log('[isCookiesFileValid] 💡 TIP: Delete bad cookies.txt or export fresh ones');
+        if (verbose) {
+            console.log('[isCookiesFileValid] FAIL: File does not exist:', cookiePath);
+            console.log('[isCookiesFileValid] TIP: Re-export cookies from browser extension');
+        }
+        _cookiesValidCache = { mtime: 0, size: 0, result: false };
         return false;
     }
-    
+
     // Check if file has content
     try {
-        console.log('[isCookiesFileValid] Reading file stats...');
+        if (verbose) console.log('[isCookiesFileValid] Reading file stats...');
         const stats = fs.statSync(cookiePath);
-        console.log('[isCookiesFileValid] File size:', stats.size, 'bytes');
-        
+        if (verbose) console.log('[isCookiesFileValid] File size:', stats.size, 'bytes');
+
         if (stats.size === 0) {
-            console.log('[isCookiesFileValid] ❌ FAIL: File is empty!');
+            if (verbose) console.log('[isCookiesFileValid] FAIL: File is empty');
+            _cookiesValidCache = { mtime: stats.mtimeMs, size: 0, result: false };
             return false;
         }
-        
+
         // Read first few lines to check format
-        console.log('[isCookiesFileValid] Reading file content...');
+        if (verbose) console.log('[isCookiesFileValid] Reading file content...');
         const content = fs.readFileSync(cookiePath, 'utf8');
-        console.log('[isCookiesFileValid] Content length:', content.length, 'chars');
-        
+        if (verbose) console.log('[isCookiesFileValid] Content length:', content.length, 'chars');
+
         const allLines = content.split('\n');
-        console.log('[isCookiesFileValid] Total lines (including empty/comments):', allLines.length);
-        
+        if (verbose) console.log('[isCookiesFileValid] Total lines (including empty/comments):', allLines.length);
+
         const lines = allLines.filter(line => line.trim() && !line.startsWith('#'));
-        console.log('[isCookiesFileValid] Data lines (non-empty, non-comment):', lines.length);
-        
+        if (verbose) console.log('[isCookiesFileValid] Data lines (non-empty, non-comment):', lines.length);
+
         if (lines.length === 0) {
-            console.log('[isCookiesFileValid] ❌ FAIL: No cookie entries found (only comments/empty lines)');
-            console.log('[isCookiesFileValid] First few lines of file:');
-            allLines.slice(0, 5).forEach((line, i) => console.log(`   Line ${i}:`, line.substring(0, 100)));
+            if (verbose) {
+                console.log('[isCookiesFileValid] FAIL: No cookie entries found');
+            }
+            _cookiesValidCache = { mtime: stats.mtimeMs, size: stats.size, result: false };
             return false;
         }
-        
-        // Show first few data lines for debugging
-        console.log('[isCookiesFileValid] First 3 data lines:');
-        lines.slice(0, 3).forEach((line, i) => {
-            const fields = line.split('\t');
-            console.log(`   Data line ${i}: ${fields.length} fields`);
-            console.log('      Raw:', line.substring(0, 120));
-        });
-        
+
+        // Show first few data lines for debugging (verbose only)
+        if (verbose) {
+            console.log('[isCookiesFileValid] First 3 data lines:');
+            lines.slice(0, 3).forEach((line, i) => {
+                const fields = line.split('\t');
+                console.log(`   Data line ${i}: ${fields.length} fields`);
+                console.log('      Raw:', line.substring(0, 120));
+            });
+        }
+
         // Validate at least one line has correct Netscape format (7 tab-separated fields)
         const sampleLine = lines[0];
         const fields = sampleLine.split('\t');
-        
-        console.log('[isCookiesFileValid] Validating Netscape format...');
-        console.log('[isCookiesFileValid] Expected: 7 tab-separated fields');
-        console.log('[isCookiesFileValid] Actual:', fields.length, 'fields');
-        
+
+        if (verbose) {
+            console.log('[isCookiesFileValid] Validating Netscape format...');
+            console.log('[isCookiesFileValid] Expected: 7 tab-separated fields');
+            console.log('[isCookiesFileValid] Actual:', fields.length, 'fields');
+        }
+
         if (fields.length < 7) {
-            console.log('\n[isCookiesFileValid] ❌ INVALID FORMAT DETECTED!');
-            console.log('[isCookiesFileValid] This is why channel loading fails with cookies.txt!');
-            console.log('[isCookiesFileValid] Problem: Lines have only', fields.length, 'fields instead of 7');
-            console.log('[isCookiesFileValid] Root cause: Python extractor produced corrupted cookies');
-            console.log('[isCookiesFileValid] Solution: Server will fall back to browser cookies automatically');
-            console.log('\n[isCookiesFileValid] Field breakdown of first line:');
-            fields.forEach((field, i) => {
-                console.log(`   Field ${i}: [${field.substring(0, 50)}]`);
-            });
+            if (verbose) {
+                console.log('\n[isCookiesFileValid] INVALID FORMAT DETECTED!');
+                console.log('[isCookiesFileValid] Problem: Lines have only', fields.length, 'fields instead of 7');
+                console.log('[isCookiesFileValid] Solution: Run POST /api/cookies/repair to fix, or re-export');
+                console.log('[isCookiesFileValid] Field breakdown of first line:');
+                fields.forEach((field, i) => {
+                    console.log(`   Field ${i}: [${field.substring(0, 50)}]`);
+                });
+            }
+            _cookiesValidCache = { mtime: stats.mtimeMs, size: stats.size, result: false };
             return false;
         }
-        
-        console.log('\n[isCookiesFileValid] ✅ PASS: Valid Netscape format!');
-        console.log('[isCookiesFileValid] Found', lines.length, 'cookies in correct format');
-        console.log('[isCookiesFileValid] Cookies file can be used safely');
+
+        if (verbose) {
+            console.log('\n[isCookiesFileValid] PASS: Valid Netscape format!');
+            console.log('[isCookiesFileValid] Found', lines.length, 'cookies in correct format');
+        }
+        _cookiesValidCache = { mtime: stats.mtimeMs, size: stats.size, result: true };
         return true;
-        
+
     } catch (err) {
-        console.log('[isCookiesFileValid] ❌ EXCEPTION during validation:');
-        console.log('   Error name:', err.name);
-        console.log('   Error message:', err.message);
-        console.log('   Error code:', err.code);
+        if (verbose) {
+            console.log('[isCookiesFileValid] EXCEPTION during validation:');
+            console.log('   Error name:', err.name);
+            console.log('   Error message:', err.message);
+            console.log('   Error code:', err.code);
+        }
         return false;
     }
+}
+
+/**
+ * ⭐ Invalidate the cached cookies.txt validation result.
+ * Call this after repairCookiesFile() or after the file is replaced.
+ */
+function invalidateCookiesFileCache() {
+    _cookiesValidCache = null;
+}
+
+/**
+ * ⭐ Log which critical YouTube auth cookies are missing from cookies.txt.
+ * Called when an age-restricted download fails with the cookies.txt strategy,
+ * so the user knows exactly which cookies to re-export from their browser.
+ *
+ * Critical YouTube auth cookies (without these, age verification fails):
+ *   SID, SSID, HSID, APISID, SAPISID, LOGIN_INFO, VISITOR_INFO1_LIVE
+ *
+ * Each cookie also has an expiration timestamp — expired cookies are flagged.
+ */
+function logMissingAuthCookies() {
+    const cookiePath = AUTH_CONFIG.cookieFilePath;
+    if (!cookiePath || !fs.existsSync(cookiePath)) {
+        console.error('[Auth Cookies] ❌ cookies.txt file does not exist at:', cookiePath);
+        return;
+    }
+
+    let content;
+    try {
+        content = fs.readFileSync(cookiePath, 'utf8');
+    } catch (err) {
+        console.error('[Auth Cookies] ❌ Cannot read cookies.txt:', err.message);
+        return;
+    }
+
+    const lines = content.split('\n').filter(l => l.trim() && !l.startsWith('#'));
+    const criticalCookies = ['SID', 'SSID', 'HSID', 'APISID', 'SAPISID', 'LOGIN_INFO', 'VISITOR_INFO1_LIVE', '__Secure-3PSID'];
+    const now = Date.now() / 1000;   // current time in seconds (cookie expiry is in seconds)
+
+    const found = {};
+    lines.forEach(line => {
+        const fields = line.split('\t');
+        if (fields.length >= 7) {
+            const name = fields[5];
+            const expiration = parseInt(fields[4], 10);
+            if (criticalCookies.includes(name)) {
+                found[name] = {
+                    expiration,
+                    expired: expiration > 0 && expiration < now,
+                    expiresInDays: expiration > 0 ? Math.round((expiration - now) / 86400) : null
+                };
+            }
+        }
+    });
+
+    console.error('[Auth Cookies] Critical YouTube cookies in cookies.txt:');
+    criticalCookies.forEach(name => {
+        if (found[name]) {
+            const info = found[name];
+            if (info.expired) {
+                console.error(`[Auth Cookies]   ❌ ${name}: EXPIRED`);
+            } else if (info.expiresInDays !== null) {
+                console.error(`[Auth Cookies]   ✅ ${name}: valid (expires in ${info.expiresInDays} day(s))`);
+            } else {
+                console.error(`[Auth Cookies]   ✅ ${name}: valid (session cookie)`);
+            }
+        } else {
+            console.error(`[Auth Cookies]   ❌ ${name}: MISSING`);
+        }
+    });
+
+    const missing = criticalCookies.filter(n => !found[n]);
+    const expired = criticalCookies.filter(n => found[n] && found[n].expired);
+    if (missing.length > 0 || expired.length > 0) {
+        console.error(`[Auth Cookies] ⚠️ ${missing.length} missing, ${expired.length} expired — re-export cookies.txt`);
+    } else {
+        console.error('[Auth Cookies] ✅ All critical YouTube cookies are present and valid');
+        console.error('[Auth Cookies]    (cookies.txt looks OK — age error may be due to wrong Google account,');
+        console.error('[Auth Cookies]     or the video requires an active member-only subscription)');
+    }
+}
+
+/**
+ * ⭐ Repair a malformed cookies.txt file.
+ *
+ * Common issues this fixes:
+ *   1. domain_specified vs initial_dot mismatch — Python's cookiejar.py asserts
+ *      that if the domain starts with ".", the flag column must be "TRUE";
+ *      if not, it must be "FALSE". Many cookie exporters get this wrong.
+ *   2. Lines with fewer than 7 tab-separated fields — skipped (yt-dlp will too).
+ *   3. Trailing empty value field — preserved but flagged.
+ *
+ * Behavior:
+ *   - Creates a timestamped backup: cookies.txt.bak.<YYYYMMDD-HHMMSS>
+ *   - Rewrites cookies.txt with corrected flag values
+ *   - Returns { repaired: boolean, fixedCount: number, totalLines: number, backupPath: string }
+ *   - If file doesn't exist or has no issues, returns { repaired: false, ... }
+ *
+ * @param {string} [cookiePath] - Path to cookies.txt (defaults to AUTH_CONFIG.cookieFilePath)
+ * @returns {object} Repair result
+ */
+function repairCookiesFile(cookiePath) {
+    cookiePath = cookiePath || AUTH_CONFIG.cookieFilePath;
+
+    if (!cookiePath || !fs.existsSync(cookiePath)) {
+        return { repaired: false, reason: 'File does not exist' };
+    }
+
+    let content;
+    try {
+        content = fs.readFileSync(cookiePath, 'utf8');
+    } catch (err) {
+        return { repaired: false, reason: 'Cannot read file: ' + err.message };
+    }
+
+    const lines = content.split(/\r?\n/);
+    const fixedLines = [];
+    let fixedCount = 0;
+    let dataLineCount = 0;
+    let commentCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+        const rawLine = lines[i];
+        const trimmed = rawLine.trim();
+
+        // Preserve comments and empty lines as-is
+        if (!trimmed || trimmed.startsWith('#')) {
+            fixedLines.push(rawLine);
+            if (trimmed.startsWith('#')) commentCount++;
+            continue;
+        }
+
+        dataLineCount++;
+        const fields = rawLine.split('\t');
+
+        // Netscape format requires 7 fields: domain, flag, path, secure, expiration, name, value
+        if (fields.length < 7) {
+            // Don't try to fix lines with wrong field count — skip them
+            console.warn(`[repairCookiesFile] Line ${i + 1}: only ${fields.length} fields (need 7) — skipping line`);
+            continue;
+        }
+
+        const domain = fields[0];
+        const flag = fields[1];
+        let correctedFlag = flag;
+
+        // The Python cookiejar assertion: domain_specified == initial_dot
+        // - If domain starts with ".", flag must be "TRUE" (domain_specified=true)
+        // - If domain does NOT start with ".", flag must be "FALSE"
+        const hasLeadingDot = domain.startsWith('.');
+        const expectedFlag = hasLeadingDot ? 'TRUE' : 'FALSE';
+
+        if (flag !== expectedFlag) {
+            correctedFlag = expectedFlag;
+            fixedCount++;
+            console.log(`[repairCookiesFile] Line ${i + 1}: domain="${domain}" flag="${flag}" → "${correctedFlag}"`);
+        }
+
+        // Reconstruct the line with the corrected flag (preserve other fields as-is)
+        fields[1] = correctedFlag;
+        fixedLines.push(fields.join('\t'));
+    }
+
+    if (fixedCount === 0) {
+        console.log(`[repairCookiesFile] ✅ No format issues found — file is already valid`);
+        return {
+            repaired: false,
+            reason: 'No issues found',
+            totalLines: dataLineCount,
+            commentCount
+        };
+    }
+
+    // Create a timestamped backup before overwriting
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const backupPath = cookiePath + '.bak.' + timestamp;
+    try {
+        fs.copyFileSync(cookiePath, backupPath);
+        console.log(`[repairCookiesFile] 📦 Backup created: ${backupPath}`);
+    } catch (err) {
+        console.error(`[repairCookiesFile] ❌ Failed to create backup: ${err.message}`);
+        return { repaired: false, reason: 'Backup failed: ' + err.message };
+    }
+
+    // Write the corrected file
+    try {
+        fs.writeFileSync(cookiePath, fixedLines.join('\n'), 'utf8');
+        // Invalidate the isCookiesFileValid() cache since we just changed the file
+        invalidateCookiesFileCache();
+        console.log(`[repairCookiesFile] ✅ Repaired ${fixedCount} cookie line(s) — file saved`);
+        console.log(`[repairCookiesFile]    Original backup: ${backupPath}`);
+        console.log(`[repairCookiesFile]    Lines processed: ${dataLineCount} data, ${commentCount} comment`);
+        return {
+            repaired: true,
+            fixedCount,
+            totalLines: dataLineCount,
+            commentCount,
+            backupPath
+        };
+    } catch (err) {
+        console.error(`[repairCookiesFile] ❌ Failed to write repaired file: ${err.message}`);
+        return { repaired: false, reason: 'Write failed: ' + err.message };
+    }
+}
+
+/**
+ * ⭐ Auto-extract cookies from the browser using extract_cookies.py
+ *
+ * This function spawns the Python script as a child process, which uses the
+ * `browser_cookie3` library to read cookies directly from the browser's
+ * encrypted storage (handles DPAPI on Windows natively) and writes them
+ * to cookies.txt in strict Netscape format.
+ *
+ * Use cases:
+ *   - At server startup, if cookies.txt is missing or invalid
+ *   - Via POST /api/cookies/extract (manual trigger from the UI)
+ *   - When a download fails with an auth error and the cookies.txt is stale
+ *
+ * Requirements:
+ *   - Python 3.x installed and in PATH (or accessible via `py -3` on Windows)
+ *   - `browser_cookie3` Python package installed (`pip install browser_cookie3`)
+ *   - `extract_cookies.py` placed next to server.js (or in project root)
+ *
+ * @param {object} [options] - { browser: 'edge'|'chrome'|'firefox'|'brave'|'auto' }
+ * @returns {Promise<{success: boolean, output: string, cookiePath: string}>}
+ */
+function autoExtractCookiesViaPython(options = {}) {
+    return new Promise((resolve) => {
+        const browser = options.browser || 'auto';
+        const cookiePath = AUTH_CONFIG.cookieFilePath;
+
+        // Find extract_cookies.py — look next to server.js first, then project root
+        const scriptCandidates = [
+            path.join(__dirname, 'extract_cookies.py'),
+            path.join(__dirname, '..', 'extract_cookies.py'),
+        ];
+        let scriptPath = null;
+        for (const candidate of scriptCandidates) {
+            if (fs.existsSync(candidate)) {
+                scriptPath = candidate;
+                break;
+            }
+        }
+
+        if (!scriptPath) {
+            resolve({
+                success: false,
+                error: 'extract_cookies.py not found. Place it next to server.js or in the project root.',
+                searchedPaths: scriptCandidates
+            });
+            return;
+        }
+
+        console.log(`[AutoExtract] 🐍 Spawning extract_cookies.py (browser=${browser})`);
+        console.log(`[AutoExtract]    Script: ${scriptPath}`);
+        console.log(`[AutoExtract]    Output: ${cookiePath}`);
+
+        // Build args: pass the actual cookie path so the script writes to the
+        // correct location regardless of where the server is installed.
+        const pyArgs = [scriptPath, '--cookie-path', cookiePath, '--browser', browser];
+
+        // Try multiple Python executables (python3, python, py -3 on Windows)
+        const pyCandidates = process.platform === 'win32'
+            ? ['python', 'python3', 'py']
+            : ['python3', 'python'];
+        let pyIdx = 0;
+
+        const tryPython = () => {
+            if (pyIdx >= pyCandidates.length) {
+                resolve({
+                    success: false,
+                    error: 'Python not found in PATH. Install Python 3.x and add it to PATH.',
+                    triedCommands: pyCandidates
+                });
+                return;
+            }
+
+            const pyCmd = pyCandidates[pyIdx];
+            pyIdx++;
+
+            // On Windows, `py` needs the `-3` flag to select Python 3
+            const fullArgs = pyCmd === 'py' ? ['-3', ...pyArgs] : pyArgs;
+
+            console.log(`[AutoExtract] Trying: ${pyCmd} ${fullArgs.join(' ')}`);
+
+            const proc = spawn(pyCmd, fullArgs, {
+                stdio: ['pipe', 'pipe', 'pipe'],
+                shell: false,
+                windowsHide: true,
+                cwd: __dirname
+            });
+
+            let stdout = '';
+            let stderr = '';
+
+            proc.stdout.on('data', (data) => {
+                const text = data.toString();
+                stdout += text;
+                // Stream Python output to server console for real-time visibility
+                text.split('\n').forEach(line => {
+                    if (line.trim()) {
+                        console.log(`[AutoExtract] 🐍 ${line.trim()}`);
+                    }
+                });
+            });
+
+            proc.stderr.on('data', (data) => {
+                stderr += data.toString();
+            });
+
+            proc.on('error', (err) => {
+                // Python not found — try next candidate
+                if (err.code === 'ENOENT') {
+                    console.log(`[AutoExtract] ${pyCmd} not found, trying next...`);
+                    tryPython();
+                } else {
+                    resolve({
+                        success: false,
+                        error: `Spawn error: ${err.message}`,
+                        stderr
+                    });
+                }
+            });
+
+            proc.on('close', (code) => {
+                if (code === 0) {
+                    console.log(`[AutoExtract] ✅ Python script completed successfully`);
+                    // Invalidate the cookie cache so the new file gets re-validated
+                    invalidateCookiesFileCache();
+                    // Check if the file was actually created
+                    if (fs.existsSync(cookiePath)) {
+                        const stats = fs.statSync(cookiePath);
+                        console.log(`[AutoExtract] ✅ cookies.txt created: ${stats.size} bytes`);
+                        resolve({
+                            success: true,
+                            output: stdout,
+                            cookiePath,
+                            sizeBytes: stats.size
+                        });
+                    } else {
+                        resolve({
+                            success: false,
+                            error: 'Python script exited 0 but cookies.txt was not created',
+                            output: stdout
+                        });
+                    }
+                } else {
+                    // Non-zero exit — check if it's a "module not found" error
+                    const errText = stderr || stdout;
+                    if (errText.includes('No module named') || errText.includes('browser_cookie3')) {
+                        resolve({
+                            success: false,
+                            error: 'browser_cookie3 Python package not installed. Run: pip install browser_cookie3',
+                            installCommand: 'pip install browser_cookie3',
+                            stderr: errText
+                        });
+                    } else {
+                        resolve({
+                            success: false,
+                            error: `Python script exited with code ${code}`,
+                            output: stdout,
+                            stderr: errText
+                        });
+                    }
+                }
+            });
+
+            // 60-second timeout (browser_cookie3 can be slow on first run)
+            setTimeout(() => {
+                try { proc.kill('SIGTERM'); } catch (e) {}
+                resolve({
+                    success: false,
+                    error: 'Python script timed out after 60 seconds',
+                    output: stdout
+                });
+            }, 60000);
+        };
+
+        tryPython();
+    });
 }
 
 /**
@@ -299,7 +714,7 @@ function buildCommandsWithCookieStrategies(baseUrl, url) {
     console.log('[commands] Strategy 1: No cookies (fastest, works for public channels)');
     
     // Strategy 2: Use cookies.txt if available and looks valid
-    const cookiesValid = isCookiesFileValid();
+    const cookiesValid = isCookiesFileValid(false);  // verbose=false to avoid log spam
     if (cookiesValid && fs.existsSync(AUTH_CONFIG.cookieFilePath)) {
         const cookiesCmd = baseUrl + ' --cookies "' + AUTH_CONFIG.cookieFilePath + '" "' + url + '"';
         strategies.push({
@@ -492,6 +907,12 @@ const DB_FILE = path.join(__dirname, 'db_channels.json');
 const savedChannels = new Map();
 let initialDiskSyncDone = false;
 
+// ⭐ NEW: In-flight download URL Set — prevents race condition where multiple
+// parallel POST /api/download requests for the same URL all pass the duplicate
+// check before any of them adds to downloadManager. Set is synchronous JS, so
+// only ONE request can be "first" to claim a URL.
+const _inFlightDownloadUrls = new Set();
+
 function loadDatabase() {
     try {
         if (fs.existsSync(DB_FILE)) {
@@ -665,12 +1086,18 @@ function fallbackSanitize(filename) {
     if (reserved.test(sanitized)) {
         sanitized = '_' + sanitized;
     }
-    
-    // Enforce max length (230 chars to leave room for suffix + extension)
-    if (sanitized.length > 230) {
-        sanitized = sanitized.substring(0, 230);
+
+    // ⭐ FIX: Platform-aware max length. On Windows, total path is capped at 260
+    // chars (without Long Path support). The 230-char limit was for the BASE
+    // NAME only, but combined with a 60+ char directory path, that pushes the
+    // total over the limit — Windows then silently truncates the .mp4 extension.
+    // Now: 180 on Windows (60 dir + 180 base + 9 date suffix + 4 ext = 253 ≤ 260),
+    // 230 on Linux/Mac (no path-length issues).
+    const maxLen = process.platform === 'win32' ? 180 : 230;
+    if (sanitized.length > maxLen) {
+        sanitized = sanitized.substring(0, maxLen);
     }
-    
+
     return sanitized || 'unnamed';
 }
 
@@ -722,13 +1149,26 @@ function hasDateStampSuffix(filename) {
 /**
  * Apply the date suffix to a base filename, inserting it just before the extension.
  * Truncates the base name if the resulting path would exceed a safe length.
+ *
+ * ⭐ WINDOWS FIX: Default maxBaseLen is now 200 (was 230) so that when combined
+ * with a long directory path (e.g. C:\Users\Jackle\Downloads\YouTube-Downloader\
+ * INGEL599\ = 60 chars), the total path stays under Windows's 260-char limit
+ * (60 + 200 + 9 suffix + 4 ext = 273 → still tight, but Windows Long Path
+ * support usually bumps the limit to 32767). On Linux/Mac, paths can be much
+ * longer so we use a more generous 230 there.
+ *
  * Example: applyDateStampToFilename("MyVideo.mp4", "20231115") → "MyVideo_23-11-15.mp4"
  * @param {string} filename - Original filename (with extension)
  * @param {string} yyyymmdd - yt-dlp upload_date YYYYMMDD
- * @param {number} [maxBaseLen=230] - Max chars for base name (Windows path safety)
+ * @param {number} [maxBaseLen] - Max chars for base name (auto-defaulted by platform)
  * @returns {string|null} New filename with suffix, or null if date is invalid
  */
-function applyDateStampToFilename(filename, yyyymmdd, maxBaseLen = 230) {
+function applyDateStampToFilename(filename, yyyymmdd, maxBaseLen) {
+    // ⭐ Platform-aware default: Windows needs shorter base names to fit the
+    // 260-char total path limit. Linux/Mac can handle much longer paths.
+    if (maxBaseLen === undefined) {
+        maxBaseLen = process.platform === 'win32' ? 200 : 230;
+    }
     const suffix = formatDateSuffixYYMMDD(yyyymmdd);
     if (!suffix) return null;
     if (!filename) return null;
@@ -832,7 +1272,7 @@ function buildBatchCommandStrategies(baseArgs) {
     });
 
     // Strategy 2: cookies.txt if available and valid
-    if (isCookiesFileValid() && fs.existsSync(AUTH_CONFIG.cookieFilePath)) {
+    if (isCookiesFileValid(false) && fs.existsSync(AUTH_CONFIG.cookieFilePath)) {  // verbose=false
         strategies.push({
             args: baseArgs.concat(['--cookies', AUTH_CONFIG.cookieFilePath]),
             description: 'cookies.txt file',
@@ -897,13 +1337,17 @@ function getVideoUploadDatesBatch(videoIds, onResult) {
 
         // Build args as ARRAY (not string) — critical for Windows compatibility.
         // The `|` in --print format would be misinterpreted by cmd.exe if we used
-        // shell: true, so we pass args directly with shell: false.
+        // ⭐ FIX: Use --dump-json instead of --print. The --print flag with `|` separator
+        // fails on older yt-dlp versions and on Windows. --dump-json outputs one JSON
+        // object per line, which we parse to extract id + upload_date. It's slower
+        // (downloads ~50KB per video vs ~10 bytes) but 100% compatible with all
+        // yt-dlp versions.
         const baseArgs = [
             '--batch-file', tmpFile,
-            '--print', '%(id)s|%(upload_date)s',
-            '--skip-download',         // broader compatibility than --no-download
+            '--dump-json',
+            '--skip-download',
             '--no-warnings',
-            '--no-progress',          // suppress progress bar that pollutes stdout
+            '--no-progress',
         ];
 
         const strategies = buildBatchCommandStrategies(baseArgs);
@@ -947,11 +1391,13 @@ function getVideoUploadDatesBatch(videoIds, onResult) {
                 line = line.trim();
                 if (!line) return;
                 lineCount++;
-                // Expected format: "videoId|YYYYMMDD"
-                const sep = line.indexOf('|');
-                if (sep > 0) {
-                    const vidId = line.slice(0, sep).trim();
-                    const uploadDate = line.slice(sep + 1).trim();
+
+                // ⭐ --dump-json outputs one JSON object per line.
+                // Parse it and extract id + upload_date.
+                try {
+                    const info = JSON.parse(line);
+                    const vidId = info.id || info.video_id;
+                    const uploadDate = info.upload_date;
                     if (vidId && uploadDate && /^\d{8}$/.test(uploadDate)) {
                         results.set(vidId, uploadDate);
                         if (onResult) {
@@ -959,6 +1405,8 @@ function getVideoUploadDatesBatch(videoIds, onResult) {
                             catch (e) { console.warn('[BatchUploadDate] onResult error:', e.message); }
                         }
                     }
+                } catch (parseErr) {
+                    // Not valid JSON — skip (could be a warning line or partial output)
                 }
             };
 
@@ -1051,54 +1499,116 @@ function getVideoUploadDatesBatch(videoIds, onResult) {
  * @param {function(string, string): void} [onResult] - Callback for each (videoId, uploadDate)
  * @returns {Promise<{results: Map<string, string>, failed: string[]}>}
  */
-async function getVideoUploadDatesParallel(videoIds, concurrency = 4, onResult) {
+async function getVideoUploadDatesParallel(videoIds, concurrency = 4, onResult, onRetry) {
     if (!videoIds || videoIds.length === 0) {
         return { results: new Map(), failed: [] };
     }
 
-    // Auto-tune concurrency for small batches
-    if (videoIds.length <= 5) {
-        concurrency = 1;
-    } else if (videoIds.length <= 20) {
-        concurrency = Math.min(2, concurrency);
-    } else if (videoIds.length <= 50) {
-        concurrency = Math.min(3, concurrency);
+    // ⭐ FIX: YouTube rate-limits after ~80 rapid API calls. To avoid this:
+    // 1. Use SMALLER batch sizes (max 50 per yt-dlp process, instead of 285)
+    // 2. Add a DELAY between retry rounds (5 seconds)
+    // 3. AUTOMATICALLY RETRY failed videoIds up to 5 times
+    //
+    // This means: for a channel with 1142 videos, instead of one giant batch of 1142,
+    // we run ~23 batches of 50, with 5-second pauses if any fail.
+    // The first round gets ~80% of dates; retry rounds get the remaining 20%.
+
+    const MAX_BATCH_SIZE = 50;          // Max videos per yt-dlp process
+    const MAX_RETRIES = Infinity;        // ⭐ Retry until ALL videos have dates
+                                          // (Safety: stops early if a round makes zero progress)
+    const RETRY_DELAY_MS = 5000;        // 5-second delay between retry rounds
+
+    const allResults = new Map();
+    const allFailed = [];
+    let remaining = videoIds.slice();   // Copy — we'll shrink this each round
+    let zeroProgressRounds = 0;          // Track consecutive zero-progress rounds
+
+    for (let round = 0; round <= MAX_RETRIES && remaining.length > 0; round++) {
+        if (round > 0) {
+            console.log(`[ParallelBatch] 🔄 Retry round ${round}: ${remaining.length} videos to re-fetch`);
+            if (onRetry) {
+                try { onRetry(round, remaining.length); } catch (e) {}
+            }
+            // Wait before retrying (let YouTube's rate limit reset)
+            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+        }
+
+        // Auto-tune concurrency for small batches
+        let batchConcurrency = concurrency;
+        if (remaining.length <= 5) {
+            batchConcurrency = 1;
+        } else if (remaining.length <= 20) {
+            batchConcurrency = Math.min(2, batchConcurrency);
+        } else if (remaining.length <= 50) {
+            batchConcurrency = Math.min(3, batchConcurrency);
+        }
+
+        // Split remaining into SMALLER chunks (max MAX_BATCH_SIZE each)
+        const chunks = [];
+        const chunkSize = Math.min(MAX_BATCH_SIZE, Math.ceil(remaining.length / batchConcurrency));
+        for (let i = 0; i < remaining.length; i += chunkSize) {
+            chunks.push(remaining.slice(i, i + chunkSize));
+        }
+
+        console.log(`[ParallelBatch] 📦 Round ${round}: ${remaining.length} videos → ${chunks.length} batches of ~${chunkSize} (concurrency=${batchConcurrency})`);
+
+        const roundResults = new Map();
+        const roundFailed = [];
+
+        // Run all chunks in parallel
+        const promises = chunks.map((chunk) =>
+            getVideoUploadDatesBatch(chunk, (vidId, uploadDate) => {
+                if (onResult) {
+                    try { onResult(vidId, uploadDate); }
+                    catch (e) { /* ignore callback errors */ }
+                }
+            }).then(r => {
+                for (const [vidId, date] of r.results) {
+                    roundResults.set(vidId, date);
+                }
+                for (const vidId of r.failed) {
+                    roundFailed.push(vidId);
+                }
+            })
+        );
+
+        await Promise.all(promises);
+
+        // Merge round results into allResults
+        for (const [vidId, date] of roundResults) {
+            allResults.set(vidId, date);
+        }
+
+        // Prepare remaining for next round (only the ones that failed THIS round)
+        remaining = roundFailed;
+
+        console.log(`[ParallelBatch] ✅ Round ${round} done: +${roundResults.size} fetched, ${roundFailed.length} still failing (total: ${allResults.size}/${videoIds.length})`);
+
+        // ⭐ SAFETY: With MAX_RETRIES=Infinity, we need a guaranteed exit.
+        // Stop ONLY if 3 consecutive rounds made ZERO progress (no new dates).
+        // This means YouTube has fully blocked us or all remaining videos are deleted.
+        if (round > 0 && roundResults.size === 0) {
+            zeroProgressRounds++;
+            console.log(`[ParallelBatch] ⚠️ Zero progress round ${zeroProgressRounds}/3 (round ${round})`);
+            if (zeroProgressRounds >= 3) {
+                console.log(`[ParallelBatch] ⛔ 3 consecutive zero-progress rounds — stopping (${remaining.length} videos are truly unavailable)`);
+                break;
+            }
+            // Wait LONGER before next retry (30s instead of 5s) to let YouTube's rate limit fully reset
+            await new Promise(r => setTimeout(r, 30000));
+        } else {
+            zeroProgressRounds = 0;
+        }
     }
 
-    // Split into chunks
-    const chunks = [];
-    const chunkSize = Math.ceil(videoIds.length / concurrency);
-    for (let i = 0; i < videoIds.length; i += chunkSize) {
-        chunks.push(videoIds.slice(i, i + chunkSize));
+    // Collect final failures
+    for (const vidId of remaining) {
+        allFailed.push(vidId);
     }
 
-    console.log(`[ParallelBatch] 📦 ${videoIds.length} videos → ${chunks.length} parallel batches of ~${chunkSize} each (concurrency=${concurrency})`);
+    console.log(`[ParallelBatch] ✅ All rounds done: ${allResults.size}/${videoIds.length} dates fetched, ${allFailed.length} failed`);
 
-    const results = new Map();
-    const failed = [];
-
-    // Run all chunks in parallel
-    const promises = chunks.map((chunk) =>
-        getVideoUploadDatesBatch(chunk, (vidId, uploadDate) => {
-            if (onResult) {
-                try { onResult(vidId, uploadDate); }
-                catch (e) { /* ignore callback errors */ }
-            }
-        }).then(r => {
-            for (const [vidId, date] of r.results) {
-                results.set(vidId, date);
-            }
-            for (const vidId of r.failed) {
-                failed.push(vidId);
-            }
-        })
-    );
-
-    await Promise.all(promises);
-
-    console.log(`[ParallelBatch] ✅ Done: ${results.size}/${videoIds.length} dates fetched, ${failed.length} failed`);
-
-    return { results, failed };
+    return { results: allResults, failed: allFailed };
 }
 
 /**
@@ -1274,28 +1784,22 @@ function resolveDuplicatesWithDuration(videos) {
 function ensureUniqueOnDisk(directory, desiredFilename) {
     const ext = path.extname(desiredFilename);           // ".mp4"
     const baseName = path.basename(desiredFilename, ext); // "video" or "video-(01h-15m-30s)"
-    
-    // ⭐ DEBUG: Log what files exist in directory
-    try {
-        const existingFiles = fs.readdirSync(directory).filter(f => 
-            f.startsWith(baseName.split('-')[0]) || f.includes(baseName.substring(0, 20))
-        );
-        if (existingFiles.length > 0) {
-            console.log(`[ensureUniqueOnDisk] 🔍 Found ${existingFiles.length} similar files in ${directory}:`);
-            existingFiles.forEach(f => console.log(`   📄 ${f}`));
-        }
-    } catch (e) {
-        console.log(`[ensureUniqueOnDisk] ⚠️ Cannot read directory:`, e.message);
-    }
-    
+
+    // ⭐ REMOVED: The "Found N similar files" debug log block — it was noisy
+    // and misleading (fuzzy substring match, not real conflict detection).
+    // The real conflict check below (fs.existsSync) is precise and only logs
+    // when an actual conflict is detected.
+
     let finalFilename = desiredFilename;
-    let counter = 1;
-    
+    let counter = 2;   // ⭐ FIX: Start at 2 so first conflict produces "Name (2).mp4"
+                        // (matching Windows Explorer / Finder convention where the
+                        // original is conceptually "Name (1).mp4")
+
     while (fs.existsSync(path.join(directory, finalFilename))) {
-        console.log(`[ensureUniqueOnDisk] ⚠️ CONFLICT: "${finalFilename}" already exists!`);
-        finalFilename = `${baseName} (${counter})${ext}`;  // Changed format to " (2)" style
+        console.log(`[ensureUniqueOnDisk] ⚠️ CONFLICT: "${finalFilename}" already exists — trying "${baseName} (${counter})${ext}"`);
+        finalFilename = `${baseName} (${counter})${ext}`;
         counter++;
-        
+
         // Safety limit to prevent infinite loops
         if (counter > 1000) {
             console.warn('[ensureUniqueOnDisk] Counter exceeded 1000, using timestamp');
@@ -1303,11 +1807,11 @@ function ensureUniqueOnDisk(directory, desiredFilename) {
             break;
         }
     }
-    
-    if (counter > 1) {
-        console.log(`[ensureUniqueOnDisk] ✅ File existed, renamed: "${desiredFilename}" → "${finalFilename}"`);
+
+    if (finalFilename !== desiredFilename) {
+        console.log(`[ensureUniqueOnDisk] ✅ Resolved conflict: "${desiredFilename}" → "${finalFilename}"`);
     }
-    
+
     return finalFilename;
 }
 
@@ -1727,6 +2231,130 @@ app.post('/api/settings/test-folder', (req, res) => {
     }
 });
 
+// ⭐ NEW: POST /api/cookies/repair — manually trigger cookies.txt repair.
+// Useful if you've re-exported the file and want to validate/fix it without
+// restarting the server. Returns the repair result as JSON.
+app.post('/api/cookies/repair', (req, res) => {
+    console.log('\n[Repair Cookies] POST /api/cookies/repair requested');
+
+    // Re-resolve the cookie path (in case it was changed via env var)
+    getNativeCookiePath();
+
+    const result = repairCookiesFile(AUTH_CONFIG.cookieFilePath);
+
+    if (result.repaired) {
+        console.log(`[Repair Cookies] ✅ Repaired ${result.fixedCount} line(s)`);
+        res.json({
+            success: true,
+            repaired: true,
+            fixedCount: result.fixedCount,
+            totalLines: result.totalLines,
+            commentCount: result.commentCount,
+            backupPath: result.backupPath,
+            cookiePath: AUTH_CONFIG.cookieFilePath,
+            message: `Repaired ${result.fixedCount} cookie line(s). Backup saved.`
+        });
+    } else {
+        console.log(`[Repair Cookies] ℹ️ No repair needed (or failed): ${result.reason}`);
+        res.json({
+            success: true,    // not an error — just nothing to fix
+            repaired: false,
+            reason: result.reason,
+            totalLines: result.totalLines,
+            commentCount: result.commentCount,
+            cookiePath: AUTH_CONFIG.cookieFilePath,
+            message: result.reason || 'No repair needed'
+        });
+    }
+});
+
+// ⭐ NEW: GET /api/cookies/validate — check cookies.txt format without modifying it.
+// Returns detailed validation info for diagnostics.
+app.get('/api/cookies/validate', (req, res) => {
+    console.log('\n[Validate Cookies] GET /api/cookies/validate');
+
+    getNativeCookiePath();
+    const cookiePath = AUTH_CONFIG.cookieFilePath;
+
+    if (!cookiePath || !fs.existsSync(cookiePath)) {
+        return res.json({
+            success: true,
+            exists: false,
+            valid: false,
+            cookiePath,
+            message: 'cookies.txt does not exist'
+        });
+    }
+
+    const isValid = isCookiesFileValid();
+    let stats;
+    try {
+        stats = fs.statSync(cookiePath);
+    } catch (e) {
+        stats = null;
+    }
+
+    res.json({
+        success: true,
+        exists: true,
+        valid: isValid,
+        cookiePath,
+        sizeBytes: stats ? stats.size : 0,
+        sizeKB: stats ? Math.round(stats.size / 1024 * 100) / 100 : 0,
+        modified: stats ? stats.mtime : null,
+        message: isValid
+            ? 'cookies.txt is valid Netscape format'
+            : 'cookies.txt has format issues — POST /api/cookies/repair to fix'
+    });
+});
+
+// ⭐ NEW: POST /api/cookies/extract — auto-extract cookies from browser via Python.
+// Spawns extract_cookies.py which uses browser_cookie3 to read cookies directly
+// from the browser's encrypted storage (handles DPAPI on Windows natively).
+// This is the recommended way to generate cookies.txt — it captures ALL cookies
+// including LOGIN_INFO (which the browser extension often misses).
+app.post('/api/cookies/extract', async (req, res) => {
+    console.log('\n[Extract Cookies] POST /api/cookies/extract requested');
+
+    const browser = (req.body && req.body.browser) || 'auto';
+    console.log(`[Extract Cookies] Browser: ${browser}`);
+
+    try {
+        const result = await autoExtractCookiesViaPython({ browser });
+
+        if (result.success) {
+            // Re-validate the new file
+            const isValid = isCookiesFileValid(false);
+            console.log(`[Extract Cookies] ✅ Extraction succeeded — cookies.txt is ${isValid ? 'valid' : 'invalid'}`);
+            res.json({
+                success: true,
+                extracted: true,
+                cookiePath: result.cookiePath,
+                sizeBytes: result.sizeBytes,
+                valid: isValid,
+                message: `Successfully extracted ${result.sizeBytes} bytes of cookies from browser. File is ${isValid ? 'valid' : 'invalid format'}.`
+            });
+        } else {
+            console.log(`[Extract Cookies] ❌ Extraction failed: ${result.error}`);
+            res.json({
+                success: false,
+                extracted: false,
+                error: result.error,
+                installCommand: result.installCommand || null,
+                searchedPaths: result.searchedPaths || null,
+                triedCommands: result.triedCommands || null,
+                message: result.error
+            });
+        }
+    } catch (err) {
+        console.error('[Extract Cookies] ❌ Unexpected error:', err.message);
+        res.status(500).json({
+            success: false,
+            error: 'Unexpected error: ' + err.message
+        });
+    }
+});
+
 // =============================================================================
 // CHANNEL ENDPOINTS
 // =============================================================================
@@ -1937,8 +2565,23 @@ app.post('/api/download', async (req, res) => {
             });
         }
 
+        // ⭐ FIX: Synchronized duplicate-check using an in-flight URL Set.
+        // The previous check (downloadManager.getAll().find...) had a race condition
+        // where multiple parallel POST /api/download requests for the same URL would
+        // all pass the check before any of them added to downloadManager.
+        // The Set is synchronous JS — only ONE request can be "first" to add the URL.
+        if (_inFlightDownloadUrls.has(videoUrl)) {
+            console.log(`[Download] ⚠️ DUPLICATE DETECTED (in-flight): URL already being processed`);
+            return res.status(409).json({
+                success: false,
+                error: 'Duplicate download',
+                message: 'This video is already being processed (in-flight)',
+                status: 'downloading'
+            });
+        }
+
         // ⭐ FIX: Check for duplicate downloads (same URL already in queue/active)
-        const existingDownload = downloadManager.getAll().find(d => 
+        const existingDownload = downloadManager.getAll().find(d =>
             d.url === videoUrl && (d.status === 'queued' || d.status === 'downloading')
         );
         if (existingDownload) {
@@ -1951,6 +2594,21 @@ app.post('/api/download', async (req, res) => {
                 status: existingDownload.status
             });
         }
+
+        // Claim the URL immediately — subsequent parallel requests for the same URL
+        // will be rejected by the in-flight check above.
+        // ⭐ CRITICAL: This MUST happen in the same synchronous block as the has()
+        // check above. If we yield to the event loop between check and add, another
+        // request could slip through. There is NO await between has() and add(),
+        // so this is atomic within a single event-loop tick.
+        _inFlightDownloadUrls.add(videoUrl);
+        // Safety: auto-remove from Set after 5 minutes (in case of uncaught errors)
+        const inflightCleanupTimer = setTimeout(() => {
+            if (_inFlightDownloadUrls.has(videoUrl)) {
+                console.warn(`[Download] ⚠️ In-flight URL cleanup triggered for: ${videoUrl}`);
+                _inFlightDownloadUrls.delete(videoUrl);
+            }
+        }, 5 * 60 * 1000);
 
         console.log('[Download] Processing download:');
         console.log('   - URL:', videoUrl);
@@ -2074,13 +2732,23 @@ app.post('/api/download', async (req, res) => {
     } catch (error) {
         console.error('[Download] ❌ ERROR creating download job:', error.message);
         console.log('='.repeat(80) + '\n');
-        
+
         res.status(500).json({
             success: false,
             error: 'Failed to create download: ' + error.message,
             suggestion: 'Check server logs for details'
         });
     }
+    // ⭐ NOTE: We do NOT use a `finally` block here to clean up
+    // _inFlightDownloadUrls. Reason: the URL must stay "claimed" while the
+    // download is RUNNING (in the download queue), not just while the HTTP
+    // request is being processed. If we cleared it here, the next parallel
+    // POST /api/download for the same video would slip through and spawn a
+    // duplicate yt-dlp process.
+    //
+    // The cleanup happens when the download COMPLETES (success/fail/cancel)
+    // via the downloadQueue's onJobComplete handler, OR via the 5-minute
+    // safety timer set below.
 });
 
 // =============================================================================
@@ -2849,6 +3517,118 @@ app.post('/api/channels/sync-all', (req, res) => {
     }
 });
 
+// ⭐ NEW: Streaming version of sync-all — sends SSE events per-channel
+// so the frontend can show a real progress bar + per-channel logs.
+// Reuses the same sseSend() helper as the Fix-Dates endpoints.
+app.post('/api/channels/sync-all-stream', async (req, res) => {
+    console.log('\n[Sync All Stream] POST /api/channels/sync-all-stream requested');
+
+    // SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    // Keep-alive heartbeat every 15s
+    const heartbeat = setInterval(() => {
+        try { res.write(': heartbeat\n\n'); } catch (e) {}
+    }, 15000);
+
+    try {
+        // Merge client channels into server state (same as the non-streaming endpoint)
+        const clientChannels = req.body && Array.isArray(req.body.channels) ? req.body.channels : [];
+        clientChannels.forEach(c => {
+            if (c && c.id && !savedChannels.has(c.id)) {
+                savedChannels.set(c.id, c);
+            }
+        });
+
+        const allChannels = Array.from(savedChannels.entries());
+        const totalChannels = allChannels.length;
+        const channelSyncResults = {};
+        let processed = 0;
+
+        sseSend(res, 'start', {
+            totalChannels,
+            message: `Starting sync for ${totalChannels} channel(s)`
+        });
+
+        for (const [id, channel] of allChannels) {
+            const channelName = channel.name || id;
+            const index = processed + 1;
+
+            sseSend(res, 'channel_start', {
+                index,
+                total: totalChannels,
+                channelId: id,
+                channelName,
+                message: `Scanning channel ${index}/${totalChannels}: ${channelName}`
+            });
+
+            // Perform the disk scan (same as non-streaming endpoint)
+            const scanRes = performDiskScanForChannel(channel);
+            savedChannels.set(id, channel);
+
+            channelSyncResults[id] = {
+                channelId: id,
+                channelName,
+                statistics: {
+                    total: scanRes.total,
+                    downloaded: scanRes.downloaded,
+                    remaining: scanRes.total - scanRes.downloaded
+                },
+                videoStatuses: scanRes.videoStatuses
+            };
+
+            processed++;
+            const percentage = totalChannels > 0
+                ? Math.round((processed / totalChannels) * 100)
+                : 100;
+
+            sseSend(res, 'channel_done', {
+                index,
+                total: totalChannels,
+                channelId: id,
+                channelName,
+                downloaded: scanRes.downloaded,
+                totalVideos: scanRes.total,
+                remaining: scanRes.total - scanRes.downloaded,
+                percentage,
+                message: `✅ ${channelName}: ${scanRes.downloaded}/${scanRes.total} downloaded`
+            });
+
+            sseSend(res, 'progress', {
+                processed,
+                total: totalChannels,
+                percentage,
+                message: `Syncing ${processed}/${totalChannels} (${percentage}%)`
+            });
+        }
+
+        initialDiskSyncDone = true;
+        saveDatabase();
+
+        clearInterval(heartbeat);
+        sseSend(res, 'done', {
+            success: true,
+            results: channelSyncResults,
+            syncedAt: new Date().toISOString(),
+            totalChannels,
+            processed,
+            message: `Sync complete for ${totalChannels} channel(s)`
+        });
+        res.end();
+    } catch (error) {
+        console.error('[Sync All Stream] Error:', error.message);
+        clearInterval(heartbeat);
+        sseSend(res, 'error', {
+            message: 'Failed to sync all channels: ' + error.message
+        });
+        res.end();
+    }
+});
+
 // Endpoints for sync status
 app.get('/api/channels/:id/sync-status', handleChannelSync);
 app.get('/api/channels/:id/sync', handleChannelSync);
@@ -3220,15 +4000,20 @@ const downloadQueue = {
         executeSmartDownload(downloadId, videoUrl, outputPath, videoTitle)
             .then(() => {
                 console.log(`[Download Queue] ✅ Job completed: ${videoTitle?.substring(0, 30)}...`);
+                // ⭐ Release the in-flight URL claim so this video can be re-downloaded later
+                _inFlightDownloadUrls.delete(videoUrl);
             })
             .catch((err) => {
                 console.error(`[Download Queue] ❌ Job failed: ${videoTitle?.substring(0, 30)}... -`, err?.message);
-                
+
+                // ⭐ Release the in-flight URL claim on failure too (so user can retry)
+                _inFlightDownloadUrls.delete(videoUrl);
+
                 try {
                     const outputDir = path.dirname(outputPath);
                     const tempFile = path.join(outputDir, `ytl_${downloadId}.mp4`);
                     const partialFile = path.join(outputDir, `ytl_${downloadId}.mp4.part`);
-                    
+
                     [tempFile, partialFile, outputPath].forEach(file => {
                         if (fs.existsSync(file)) {
                             fs.unlinkSync(file);
@@ -3393,9 +4178,28 @@ const downloadQueue = {
 // DOWNLOAD EXECUTION FUNCTIONS
 // =============================================================================
 
+// ⭐ NEW: Set of downloadIds currently being processed by executeSmartDownload.
+// This is the LAST LINE OF DEFENSE against duplicate spawns. Even if the
+// in-flight URL Set guard at /api/download somehow fails (e.g., race condition),
+// and the downloadQueue.executeJob somehow gets called twice, this guard
+// ensures only ONE yt-dlp process runs per downloadId.
+const _activeDownloadIds = new Set();
+
 function executeSmartDownload(downloadId, videoUrl, outputPath, videoTitle) {
+    // ⭐ GUARD: If this downloadId is already being processed, return immediately.
+    // This prevents duplicate yt-dlp spawns when multiple code paths trigger
+    // the same download (e.g., queue retry + manual retry).
+    if (_activeDownloadIds.has(downloadId)) {
+        console.warn(`[Smart Download] ⚠️ DUPLICATE SPAWN BLOCKED: ${videoTitle?.substring(0, 30)}... (downloadId ${downloadId} already active)`);
+        return Promise.resolve({ success: true, message: 'Download already in progress (duplicate spawn blocked)' });
+    }
+
+    // Mark this downloadId as active
+    _activeDownloadIds.add(downloadId);
+
     const download = downloadManager.get(downloadId);
     if (!download) {
+        _activeDownloadIds.delete(downloadId);
         console.error('[Smart Download] Download not found:', downloadId);
         return Promise.reject(new Error('Download not found'));
     }
@@ -3458,6 +4262,11 @@ function executeSmartDownload(downloadId, videoUrl, outputPath, videoTitle) {
             });
             
             throw error;  // Re-throw so caller's .catch() fires
+        })
+        .finally(() => {
+            // ⭐ ALWAYS clean up the active downloadId Set so the same video can
+            // be retried later (e.g., after a failure, user clicks Download again)
+            _activeDownloadIds.delete(downloadId);
         });
 }
 
@@ -3515,11 +4324,12 @@ async function executeDownloadWithFormat(downloadId, videoUrl, outputPath, forma
             console.log(`[Execute Download] 🔊 MERGE MODE: combining video (${formatInfo.formatId}) + bestaudio`);
         }
 
-        // ⭐ FIX: Quote the output path to handle spaces in directory names (e.g. "Single File")
-        const quotedTempPath = `"${tempPath}"`;
-        const args = [
+        // ⭐ FIX: Use the RAW path (no literal quotes) — with shell: false below,
+        // args are passed verbatim to yt-dlp, so paths with spaces work natively
+        // without needing shell-level quote stripping.
+        const baseArgs = [
             '-f', formatSelector,
-            '-o', quotedTempPath,  // ⭐ KEY: Quoted SHORT path handles spaces!
+            '-o', tempPath,  // ⭐ KEY: raw path — shell: false handles spaces natively
             '--no-playlist',
             '--embed-chapters',
             '--embed-metadata',
@@ -3541,15 +4351,13 @@ async function executeDownloadWithFormat(downloadId, videoUrl, outputPath, forma
         
         // ⭐ BUG FIX #3: Add special flags for live stream downloads
         if (isLiveStreamVideo) {
-            // These flags help yt-dlp handle live stream archives better
-            args.push('--wait-for-video', '0.1');  // Don't wait for live streams
-            args.push('--no-check-certificates');   // Skip cert checks that may fail
-            args.push('--socket-timeout', '60');     // Longer timeout for large files
+            baseArgs.push('--wait-for-video', '0.1');
+            baseArgs.push('--no-check-certificates');
+            baseArgs.push('--socket-timeout', '60');
             console.log(`[Execute Download] 🎴 Added live stream compatibility flags`);
         }
-        
-        // Always add merge flag
-        args.push('--merge-output-format', 'mp4');
+
+        baseArgs.push('--merge-output-format', 'mp4');
         
         if (FFMPEG_AVAILABLE) {
             console.log('[Execute Download] ✅ FFmpeg available for merging');
@@ -3557,99 +4365,147 @@ async function executeDownloadWithFormat(downloadId, videoUrl, outputPath, forma
             console.warn('[Execute Download] ⚠️ FFmpeg not available, using fallback merger');
         }
         
-        args.push(videoUrl);
-
-        console.log(`[Execute Download] Command: yt-dlp ${args.join(' ').substring(0, 200)}...`);
-
-        const ytDlpProcess = spawn('yt-dlp', args, {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            shell: true,
-            cwd: outputDir
+        // ⭐ NEW: Build cookie strategies - same 3-strategy chain as
+        // buildCommandsWithCookieStrategies() but for args-array format.
+        // This handles age-restricted videos that require authentication.
+        // We try each strategy in sequence: no-cookies -> cookies.txt -> browser.
+        const cookieStrategies = [];
+        cookieStrategies.push({
+            name: 'No cookies (public access)',
+            args: []
+        });
+        if (isCookiesFileValid(false) && fs.existsSync(AUTH_CONFIG.cookieFilePath)) {  // verbose=false
+            cookieStrategies.push({
+                name: 'cookies.txt file',
+                args: ['--cookies', AUTH_CONFIG.cookieFilePath]
+            });
+        }
+        const browserName = AUTH_CONFIG.browserName || 'edge';
+        cookieStrategies.push({
+            name: `Browser (${browserName})`,
+            args: ['--cookies-from-browser', browserName]
         });
 
-        let stdoutData = '';
-        let stderrData = '';
+        let strategyIdx = 0;
 
-        ytDlpProcess.stdout.on('data', (data) => {
-            stdoutData += data.toString();
-            
-            // Parse progress from output
-            const progressMatch = stdoutData.match(/(\d+\.?\d*)%/);
-            if (progressMatch) {
-                const percent = parseFloat(progressMatch[1]);
-                downloadManager.update(downloadId, { progress: percent });
-                
-                // Extract additional info if available
-                const speedMatch = stdoutData.match(/(\d+\.?\d*\s*(?:MiB|KiB|GiB)\/s)/);
-                const sizeMatch = stdoutData.match(/of\s+(\d+\.?\d*\s*(?:MiB|KiB|GiB))/);
-                
-                if (speedMatch) downloadManager.update(downloadId, { speed: speedMatch[1] });
-                if (sizeMatch) downloadManager.update(downloadId, { total: sizeMatch[1] });
+        // ⭐ Recursive helper: try each cookie strategy in sequence.
+        // If yt-dlp fails with an age/sign-in/cookie error, retry with next strategy.
+        // Reuses the same baseArgs + temp file path across retries.
+        const tryDownloadWithStrategy = () => {
+            if (strategyIdx >= cookieStrategies.length) {
+                reject(new Error('All cookie strategies failed - see previous error logs in server terminal'));
+                return;
             }
-        });
 
-        ytDlpProcess.stderr.on('data', (data) => {
-            stderrData += data.toString();
-        });
+            const strategy = cookieStrategies[strategyIdx];
+            strategyIdx++;
 
-        ytDlpProcess.on('close', (code) => {
-            console.log(`[Execute Download] Process exited with code: ${code}`);
-            
-            if (code === 0) {
-                // ⭐⭐⭐ POST-DOWNLOAD: Rename from short temp name to desired long name ⭐⭐⭐
-                try {
-                    // Check what file was actually created (might be .webm or .mkv if merge changed format)
-                    let actualFile = null;
-                    const possibleExtensions = ['.mp4', '.webm', '.mkv'];
-                    
-                    for (const ext of possibleExtensions) {
-                        const checkPath = path.join(outputDir, `ytl_${downloadId}${ext}`);
-                        if (fs.existsSync(checkPath)) {
-                            actualFile = checkPath;
-                            break;
-                        }
-                    }
-                    
-                    if (!actualFile) {
-                        // File might have been saved with a different name, search for recent files
-                        console.log('[Execute Download] Temp file not found, searching for downloaded file...');
-                        
-                        // Find most recently modified video file in output dir
-                        if (fs.existsSync(outputDir)) {
-                            const files = fs.readdirSync(outputDir)
-                                .filter(f => ['.mp4', '.webm', '.mkv'].includes(path.extname(f).toLowerCase()))
-                                .map(f => ({
-                                    path: path.join(outputDir, f),
-                                    mtime: fs.statSync(path.join(outputDir, f)).mtime.getTime()
-                                }))
-                                .sort((a, b) => b.mtime - a.mtime);  // Most recent first
-                            
-                            if (files.length > 0 && files[0].mtime > Date.now() - 3600000) { // Within last hour
-                                actualFile = files[0].path;
-                                console.log(`[Execute Download] Found recent file: ${path.basename(actualFile)}`);
+            // Build args for this strategy: baseArgs + cookie args + video URL
+            const args = baseArgs.concat(strategy.args);
+            args.push(videoUrl);
+
+            console.log(`\n[Execute Download] Cookie strategy ${strategyIdx}/${cookieStrategies.length}: ${strategy.name}`);
+            console.log(`[Execute Download] Command: yt-dlp ${args.join(' ').substring(0, 200)}...`);
+
+            // ⭐ FIX (DEP0190): shell: false to avoid Node.js deprecation warning.
+            // Args are passed verbatim to yt-dlp - paths with spaces work natively.
+            const ytDlpProcess = spawn('yt-dlp', args, {
+                stdio: ['pipe', 'pipe', 'pipe'],
+                shell: false,
+                windowsHide: true,
+                cwd: outputDir
+            });
+
+            let stdoutData = '';
+            let stderrData = '';
+
+            ytDlpProcess.stdout.on('data', (data) => {
+                stdoutData += data.toString();
+
+                // Parse progress from output
+                const progressMatch = stdoutData.match(/(\d+\.?\d*)%/);
+                if (progressMatch) {
+                    const percent = parseFloat(progressMatch[1]);
+                    downloadManager.update(downloadId, { progress: percent });
+
+                    const speedMatch = stdoutData.match(/(\d+\.?\d*\s*(?:MiB|KiB|GiB)\/s)/);
+                    const sizeMatch = stdoutData.match(/of\s+(\d+\.?\d*\s*(?:MiB|KiB|GiB))/);
+
+                    if (speedMatch) downloadManager.update(downloadId, { speed: speedMatch[1] });
+                    if (sizeMatch) downloadManager.update(downloadId, { total: sizeMatch[1] });
+                }
+            });
+
+            ytDlpProcess.stderr.on('data', (data) => {
+                stderrData += data.toString();
+            });
+
+            ytDlpProcess.on('error', (err) => {
+                console.error(`[Execute Download] Spawn error (strategy ${strategyIdx}):`, err.message);
+                // Try next strategy
+                tryDownloadWithStrategy();
+            });
+
+            ytDlpProcess.on('close', (code) => {
+                if (code === 0) {
+                    console.log(`[Execute Download] Download complete (strategy ${strategyIdx}: ${strategy.name})`);
+
+                    // Find the actual downloaded file (may have various extensions)
+                    let actualFile = path.join(outputDir, `ytl_${downloadId}.mp4`);
+
+                    // Check for .webm or .mkv if .mp4 doesn't exist
+                    if (!fs.existsSync(actualFile)) {
+                        const possibleExts = ['.mp4', '.webm', '.mkv'];
+                        for (const ext of possibleExts) {
+                            const candidate = path.join(outputDir, `ytl_${downloadId}${ext}`);
+                            if (fs.existsSync(candidate)) {
+                                actualFile = candidate;
+                                break;
                             }
                         }
                     }
-                    
+
                     if (!actualFile || !fs.existsSync(actualFile)) {
                         reject(new Error('Download completed but output file not found'));
                         return;
                     }
-                    
+
                     const stats = fs.statSync(actualFile);
-                    console.log(`[Execute Download] ✅ Download complete!`);
                     console.log(`[Execute Download] Downloaded: ${path.basename(actualFile)} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
-                    
-                    // Now RENAME to the desired long filename
-                    // ⭐ NEW: Use sanitizeViaPython() for consistent sanitization with frontend
-                    // This ensures saved filename matches what UI displays (from resolveDuplicatesWithDuration)
-                    const originalBaseName = path.basename(outputPath, '.mp4');
+
+                    // Now RENAME to the desired long filename (wrapped in try/catch
+                    // so a rename failure doesn't reject the whole download - we fall
+                    // back to the temp file path instead).
+                    try {
+                        // Use sanitizeViaPython() for consistent sanitization with frontend
+                        const originalBaseName = path.basename(outputPath, '.mp4');
                     const sanitizedBaseName = sanitizeViaPython(originalBaseName);
-                    let finalPath = path.join(outputDir, sanitizedBaseName + '.mp4');
-                    
+
+                    // ⭐ FIX: Cap the base name length so the TOTAL PATH stays under Windows's
+                    // 260-char limit. The 230-char limit in sanitizeViaPython only considers
+                    // the base name, not the full path — which causes Windows to silently
+                    // truncate the .mp4 extension off long filenames.
+                    //
+                    // Budget: MAX_TOTAL_PATH - outputDir length - 4 (for ".mp4") - 12 (safety
+                    // margin for the "_YY-MM-DD" date suffix that gets added later)
+                    const MAX_TOTAL_PATH = process.platform === 'win32' ? 250 : 1024;  // 250 for Windows safety
+                    const ext = '.mp4';
+                    const dateSuffixBudget = 12;   // "_YY-MM-DD" = 9 chars + safety margin
+                    const dirLen = outputDir.length + 1;  // +1 for path separator
+                    const maxBaseLen = Math.max(20, MAX_TOTAL_PATH - dirLen - ext.length - dateSuffixBudget);
+
+                    let safeBaseName = sanitizedBaseName;
+                    if (safeBaseName.length > maxBaseLen) {
+                        safeBaseName = safeBaseName.substring(0, maxBaseLen);
+                        console.log(`[Execute Download] ⚠️ Base name truncated to ${maxBaseLen} chars (path-length safety)`);
+                    }
+
+                    let finalPath = path.join(outputDir, safeBaseName + ext);
+
                     // ⭐ NEW: Use ensureUniqueOnDisk for conflict resolution (replaces inline counter logic)
-                    finalPath = path.join(outputDir, ensureUniqueOnDisk(outputDir, sanitizedBaseName + '.mp4'));
-                    
+                    const safeFilename = ensureUniqueOnDisk(outputDir, safeBaseName + ext);
+                    finalPath = path.join(outputDir, safeFilename);
+
                     // Perform the rename to SANITIZED filename
                     fs.renameSync(actualFile, finalPath);
                     console.log(`[Execute Download] 📝 Renamed to: ${path.basename(finalPath)}`);
@@ -3757,14 +4613,50 @@ async function executeDownloadWithFormat(downloadId, videoUrl, outputPath, forma
                 
             } else {
                 const errorMsg = stderrData.substring(stderrData.length - 500);
-                console.error(`[Execute Download] ❌ Failed: ${errorMsg}`);
+                console.error(`[Execute Download] Strategy ${strategyIdx} failed (code ${code}): ${errorMsg}`);
+
+                // ⭐ NEW: Detect age/sign-in/cookie errors and retry with next strategy.
+                // If the error matches an auth pattern AND we have more strategies to try,
+                // recursively call tryDownloadWithStrategy() instead of rejecting.
+                const isAuthError = /Sign in to confirm your age|Use --cookies-from-browser|Use --cookies for the authentication|cookies are locked|Unable to extract|Login required|Sign in to confirm/i.test(errorMsg);
+                const hasNext = strategyIdx < cookieStrategies.length;
+                if (isAuthError && hasNext) {
+                    console.warn(`[Execute Download] Auth error detected - retrying with strategy ${strategyIdx + 1}/${cookieStrategies.length}...`);
+                    // ⭐ BONUS: If this was the cookies.txt strategy, log which critical
+                    // YouTube auth cookies are missing so the user knows what to re-export.
+                    if (strategy.name === 'cookies.txt file') {
+                        logMissingAuthCookies();
+                    }
+                    tryDownloadWithStrategy();
+                    return;
+                }
+
+                // ⭐ If all strategies failed on an auth error, log a clear summary
+                // telling the user what's wrong and how to fix it.
+                if (isAuthError && !hasNext) {
+                    console.error('\n[Execute Download] ============================================================');
+                    console.error('[Execute Download] ❌ ALL COOKIE STRATEGIES FAILED for age-restricted video');
+                    console.error('[Execute Download] ============================================================');
+                    console.error('[Execute Download] Strategy 1 (no cookies):   failed — age verification required');
+                    console.error('[Execute Download] Strategy 2 (cookies.txt):  failed — your cookies.txt may be');
+                    console.error('[Execute Download]                              expired or missing critical cookies');
+                    console.error('[Execute Download] Strategy 3 (browser edge):  failed — DPAPI decryption issue');
+                    console.error('[Execute Download] ');
+                    console.error('[Execute Download] TO FIX:');
+                    console.error('[Execute Download]   1. Open Edge, go to https://www.youtube.com');
+                    console.error('[Execute Download]   2. Sign OUT completely, then sign back in (refresh session)');
+                    console.error('[Execute Download]   3. Browse around for 30s (homepage, subscriptions, watch a video)');
+                    console.error('[Execute Download]   4. Use "Get cookies.txt LOCALLY" browser extension to export');
+                    console.error('[Execute Download]   5. Save to: ' + AUTH_CONFIG.cookieFilePath);
+                    console.error('[Execute Download]   6. Restart the server (auto-repair runs at startup)');
+                    console.error('[Execute Download] ');
+                    logMissingAuthCookies();
+                    console.error('[Execute Download] ============================================================\n');
+                }
+
+                // Non-auth error, OR all strategies exhausted - reject
                 reject(new Error(`yt-dlp exited with code ${code}: ${errorMsg}`));
             }
-        });
-
-        ytDlpProcess.on('error', (err) => {
-            console.error(`[Execute Download] ❌ Spawn error:`, err);
-            reject(err);
         });
 
         // Timeout after 30 minutes
@@ -3775,6 +4667,10 @@ async function executeDownloadWithFormat(downloadId, videoUrl, outputPath, forma
                 reject(new Error('Download timeout (30 minutes)'));
             }
         }, 30 * 60 * 1000);
+        };
+
+        // ⭐ KICK OFF the download with the first cookie strategy
+        tryDownloadWithStrategy();
     });
 }
 
@@ -5133,6 +6029,15 @@ async function applyDateStampsForChannel(channel, res) {
             } else {
                 emitVideo(item, 'unchanged', { message: 'Date stamp already present or invalid' });
             }
+        }, (round, remainingCount) => {
+            // ⭐ NEW: SSE event for retry progress — informs the frontend that
+            // YouTube rate-limited us and we're retrying
+            sseSend(res, 'retry', {
+                channelId: channel.id,
+                round,
+                remaining: remainingCount,
+                message: `YouTube rate-limited — retry round ${round}: ${remainingCount} videos to re-fetch...`
+            });
         });
 
         // Phase 5: Any videos still in pendingMap didn't get a date → fetch_failed
@@ -5341,6 +6246,14 @@ async function applyDateStampsForSingleFileFolder(res) {
                     message: 'Date stamp already present or invalid'
                 });
             }
+        }, (round, remainingCount) => {
+            // ⭐ NEW: SSE event for retry progress
+            sseSend(res, 'retry', {
+                folder: 'Single-File',
+                round,
+                remaining: remainingCount,
+                message: `YouTube rate-limited — retry round ${round}: ${remainingCount} files to re-fetch...`
+            });
         });
 
         // Phase 5: Failed (no date returned)
@@ -5616,6 +6529,42 @@ validateAuthConfig();
 // Convert cookie path to native format on startup
 getNativeCookiePath();
 
+// ⭐ NEW: Auto-repair cookies.txt if it has format issues (Python cookiejar
+// assertion failures, e.g. domain_specified != initial_dot). Creates a
+// timestamped backup before rewriting the file.
+console.log('\n[Startup] 🍪 Checking cookies.txt for format issues...');
+const repairResult = repairCookiesFile(AUTH_CONFIG.cookieFilePath);
+if (repairResult.repaired) {
+    console.log(`[Startup] ✅ cookies.txt auto-repaired: ${repairResult.fixedCount} line(s) fixed`);
+    console.log(`[Startup]    Backup saved to: ${repairResult.backupPath}`);
+} else if (repairResult.reason && !repairResult.reason.includes('does not exist') && !repairResult.reason.includes('No issues')) {
+    console.log(`[Startup] ⚠️ cookies.txt repair skipped: ${repairResult.reason}`);
+} else if (repairResult.reason === 'No issues found') {
+    console.log(`[Startup] ✅ cookies.txt format is valid (no repair needed)`);
+}
+
+// ⭐ NEW: If cookies.txt is still missing or invalid after repair, try
+// auto-extracting from the browser via extract_cookies.py. This runs
+// asynchronously — the server starts immediately and the extraction
+// completes in the background.
+if (!isCookiesFileValid(false)) {
+    console.log('\n[Startup] 🔄 cookies.txt missing or invalid — attempting auto-extraction from browser...');
+    console.log('[Startup]    (This runs in the background — server will start immediately)');
+    autoExtractCookiesViaPython({ browser: 'auto' }).then(extractResult => {
+        if (extractResult.success) {
+            console.log(`\n[Startup] ✅ Auto-extraction succeeded! cookies.txt created (${extractResult.sizeBytes} bytes)`);
+            console.log('[Startup]    Cookie strategy 2 (cookies.txt) is now available for downloads');
+        } else {
+            console.log(`\n[Startup] ⚠️ Auto-extraction failed: ${extractResult.error}`);
+            if (extractResult.installCommand) {
+                console.log(`[Startup]    Fix: Run "${extractResult.installCommand}" then restart server`);
+            }
+        }
+    });
+} else {
+    console.log('[Startup] ✅ cookies.txt is valid — auto-extraction not needed');
+}
+
 // Log cookie mode
 console.log('\n' + '='.repeat(70));
 console.log('🍪 COOKIE MODE DETECTION');
@@ -5627,12 +6576,12 @@ if (isCookiesFileValid()) {
 } else {
     console.log('⚠️  Mode: Browser fallback (' + AUTH_CONFIG.browserName + ')');
     console.log('   Reason: cookies.txt not found or invalid format');
+    console.log('   Auto-extraction is running in the background...');
     console.log('');
-    console.log('💡 TIP: For better reliability:');
-    console.log('   1. Install "Get cookies.txt LOCALLY" browser extension');
-    console.log('   2. Export YouTube cookies to: ' + AUTH_CONFIG.cookieFilePath);
-    console.log('      (project root — same folder as README.md, NOT inside server/)');
-    console.log('   3. Restart server');
+    console.log('💡 TIP: If auto-extraction fails, you can manually trigger it:');
+    console.log('   curl -X POST http://localhost:' + PORT + '/api/cookies/extract');
+    console.log('   Or install browser_cookie3: pip install browser_cookie3');
+    console.log('   Then restart the server');
 }
 console.log('='.repeat(70) + '\n');
 
