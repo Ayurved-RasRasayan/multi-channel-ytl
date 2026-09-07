@@ -862,6 +862,27 @@
             animation: pulse-amber 1.1s ease-in-out infinite;
         }
 
+        /* ⭐ Update DB button — green accent for database sync */
+        .channel-item-btn-update-db {
+            background: #DCFCE7;
+            color: #16A34A;
+        }
+
+        .channel-item-btn-update-db:hover {
+            background: #16A34A;
+            color: white;
+            transform: scale(1.1);
+        }
+
+        .channel-item-btn-update-db.running {
+            animation: pulse-green 1.1s ease-in-out infinite;
+        }
+
+        @keyframes pulse-green {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5); }
+            50%      { box-shadow: 0 0 0 5px rgba(22, 163, 74, 0); }
+        }
+
         @keyframes pulse-amber {
             0%, 100% { box-shadow: 0 0 0 0 rgba(230, 81, 0, 0.5); }
             50%      { box-shadow: 0 0 0 5px rgba(230, 81, 0, 0); }
@@ -3379,6 +3400,12 @@
                                         title="Add YouTube upload date (_YY-MM-DD) to existing files in this channel">
                                     📅
                                 </button>
+                                <button class="channel-item-btn channel-item-btn-update-db" 
+                                        id="update-db-btn-${channel.id}"
+                                        onclick="event.stopPropagation(); updateDatabase('${channel.id}')" 
+                                        title="Permanently update DB to match files on disk">
+                                    🗃️
+                                </button>
                                 <button class="channel-item-btn channel-item-btn-refresh" 
                                         id="refresh-btn-${channel.id}"
                                         onclick="event.stopPropagation(); refreshChannel('${channel.id}')" 
@@ -5024,6 +5051,8 @@
                         case 'complete':      onComplete(data); break;
                         case 'error':         onError(data); break;
                         case 'retry':         if (handlers.onRetry) handlers.onRetry(data); break;
+                        case 'orphaned_start': if (handlers.onOrphanedStart) handlers.onOrphanedStart(data); break;
+                        case 'orphaned':       if (handlers.onOrphaned) handlers.onOrphaned(data); break;
                     }
                 }
             }
@@ -5176,6 +5205,93 @@
                 addLogEntry(`❌ Fix-Dates failed for "${channelName}": ${err.message}`, 'error');
                 showAlert(`❌ Fix-Dates failed: ${err.message}`, 'error', 6000);
                 updateChannelFixDatesProgress(channelId, 0, 0, 0, 'reset');
+            }
+        }
+
+        /**
+         * ⭐ Update Database — Permanently sync DB to match files on disk.
+         * - Updates finalFilename for matched videos
+         * - Marks matched videos as 'completed' / 'downloaded'
+         * - Adds orphaned disk files as new DB entries
+         * - Saves DB permanently (survives page reloads)
+         */
+        async function updateDatabase(channelId) {
+            const btn = document.getElementById(`update-db-btn-${channelId}`);
+            const channelObj = channels.find(ch => ch.id === channelId);
+            const channelName = channelObj ? (channelObj.name || channelObj.handle || channelId) : channelId;
+
+            if (btn) {
+                btn.classList.add('running');
+                btn.disabled = true;
+            }
+
+            addLogEntry(`🗃️ Update DB starting for "${channelName}"…`, 'info');
+            showAlert(`🗃️ Updating database for <strong>${escapeHtml(channelName)}</strong> — matching disk files to DB…`, 'info', 6000);
+
+            try {
+                await streamFixDatesSSE(`${API_BASE}/api/channels/${channelId}/update-database`, {
+                    onStart: (d) => {
+                        addLogEntry(`🗃️ Scanning ${d.diskFiles} disk files against ${d.totalVideos} DB videos`, 'info');
+                    },
+                    onProgress: (d) => {
+                        if (btn) btn.title = `Update DB: ${d.processed}/${d.total} (${d.percentage}%)`;
+                    },
+                    onOrphanedStart: (d) => {
+                        addLogEntry(`  📦 Adding ${d.count} orphaned disk files to DB…`, 'info');
+                    },
+                    onOrphaned: (d) => {
+                        addLogEntry(`    ➕ ${escapeHtml(d.filename.substring(0, 60))}...`, 'success');
+                    },
+                    onDone: (d) => {
+                        const msg = `🗃️ DB updated: ${d.downloaded}/${d.totalVideos} downloaded (${d.updated} filenames fixed, ${d.orphanedAdded} orphaned files added)`;
+                        addLogEntry(msg, 'success');
+                        showAlert(msg, 'success', 6000);
+
+                        // Update channel meta
+                        if (d.downloaded !== undefined && d.totalVideos) {
+                            const meta = document.getElementById(`channel-meta-${channelId}`);
+                            if (meta) {
+                                meta.innerHTML = `<span style="color:#16a34a;font-weight:600;">✓ ${d.downloaded}/${d.totalVideos} downloaded</span>`;
+                                setTimeout(() => {
+                                    updateChannelFixDatesProgress(channelId, 0, 0, 0, 'reset');
+                                }, 3000);
+                            }
+                        }
+                    },
+                    onComplete: () => {
+                        // Re-fetch channels from server
+                        setTimeout(async () => {
+                            try {
+                                const r = await fetch(`${API_BASE}/api/channels`);
+                                const d = await r.json();
+                                if (d.success && Array.isArray(d.channels)) {
+                                    channels = d.channels;
+                                    if (activeChannelId === channelId) {
+                                        currentChannel = channels.find(ch => ch.id === channelId);
+                                        videos = currentChannel ? (currentChannel.videos || []) : [];
+                                        renderVideos();
+                                        updateChannelStats();
+                                    }
+                                    renderChannelList();
+                                }
+                            } catch (e) { /* non-fatal */ }
+                        }, 3500);
+                    },
+                    onError: (d) => {
+                        addLogEntry(`❌ Update DB error: ${d.message}`, 'error');
+                        showAlert(`❌ Update DB failed: ${d.message}`, 'error', 6000);
+                    }
+                });
+            } catch (err) {
+                console.error('[Update DB] error:', err);
+                addLogEntry(`❌ Update DB failed: ${err.message}`, 'error');
+                showAlert(`❌ Update DB failed: ${err.message}`, 'error', 6000);
+            } finally {
+                if (btn) {
+                    btn.classList.remove('running');
+                    btn.disabled = false;
+                    btn.title = 'Permanently update DB to match files on disk';
+                }
             }
         }
 

@@ -1136,59 +1136,87 @@ function formatDateSuffixYYMMDD(yyyymmdd) {
 
 /**
  * Detect whether a filename already has our date-stamp suffix.
- * Matches "_YY-MM-DD" right before the extension, e.g. "MyVideo_23-11-15.mp4".
+ * Matches "_YY-MM-DD" right before the extension, optionally followed by "--videoId".
+ * Examples that match:
+ *   "MyVideo_23-11-15.mp4"
+ *   "MyVideo_23-11-15--yi52DjmVEEU.mp4"
  * @param {string} filename - full filename (with or without extension)
  * @returns {boolean}
  */
 function hasDateStampSuffix(filename) {
     if (!filename) return false;
-    return /_\d{2}-\d{2}-\d{2}\.(mp4|webm|mkv|m4a|mp3)$/i.test(filename) ||
-           /_\d{2}-\d{2}-\d{2}$/i.test(filename);
+    // Match: _YY-MM-DD optionally followed by --videoId (11 chars), then extension
+    return /_\d{2}-\d{2}-\d{2}(?:--[a-zA-Z0-9_-]{11})?\.(mp4|webm|mkv|m4a|mp3)$/i.test(filename) ||
+           /_\d{2}-\d{2}-\d{2}(?:--[a-zA-Z0-9_-]{11})?$/i.test(filename);
 }
 
 /**
- * Apply the date suffix to a base filename, inserting it just before the extension.
+ * Detect whether a filename already has a --videoId suffix.
+ * Example: "MyVideo_23-11-15--yi52DjmVEEU.mp4" → true
+ * @param {string} filename
+ * @returns {boolean}
+ */
+function hasVideoIdSuffix(filename) {
+    if (!filename) return false;
+    return /--[a-zA-Z0-9_-]{11}\.(mp4|webm|mkv|m4a|mp3)$/i.test(filename);
+}
+
+/**
+ * Apply the date suffix (and optionally videoId) to a base filename.
+ * Inserts "_YY-MM-DD" (and optionally "--videoId") just before the extension.
  * Truncates the base name if the resulting path would exceed a safe length.
  *
- * ⭐ WINDOWS FIX: Default maxBaseLen is now 200 (was 230) so that when combined
- * with a long directory path (e.g. C:\Users\Jackle\Downloads\YouTube-Downloader\
- * INGEL599\ = 60 chars), the total path stays under Windows's 260-char limit
- * (60 + 200 + 9 suffix + 4 ext = 273 → still tight, but Windows Long Path
- * support usually bumps the limit to 32767). On Linux/Mac, paths can be much
- * longer so we use a more generous 230 there.
+ * Examples:
+ *   applyDateStampToFilename("MyVideo.mp4", "20231115") → "MyVideo_23-11-15.mp4"
+ *   applyDateStampToFilename("MyVideo.mp4", "20231115", undefined, "yi52DjmVEEU") → "MyVideo_23-11-15--yi52DjmVEEU.mp4"
+ *   applyDateStampToFilename("MyVideo_23-11-15.mp4", "20231115", undefined, "yi52DjmVEEU") → "MyVideo_23-11-15--yi52DjmVEEU.mp4"
  *
- * Example: applyDateStampToFilename("MyVideo.mp4", "20231115") → "MyVideo_23-11-15.mp4"
  * @param {string} filename - Original filename (with extension)
  * @param {string} yyyymmdd - yt-dlp upload_date YYYYMMDD
  * @param {number} [maxBaseLen] - Max chars for base name (auto-defaulted by platform)
+ * @param {string} [videoId] - Optional YouTube video ID to append as --videoId
  * @returns {string|null} New filename with suffix, or null if date is invalid
  */
-function applyDateStampToFilename(filename, yyyymmdd, maxBaseLen) {
+function applyDateStampToFilename(filename, yyyymmdd, maxBaseLen, videoId) {
     // ⭐ Platform-aware default: Windows needs shorter base names to fit the
     // 260-char total path limit. Linux/Mac can handle much longer paths.
     if (maxBaseLen === undefined) {
         maxBaseLen = process.platform === 'win32' ? 200 : 230;
     }
-    const suffix = formatDateSuffixYYMMDD(yyyymmdd);
-    if (!suffix) return null;
+    const dateSuffix = formatDateSuffixYYMMDD(yyyymmdd);
+    if (!dateSuffix) return null;
     if (!filename) return null;
 
-    // Split extension (handle multi-dot extensions like .tar.gz too, but our case is simple .mp4)
+    // Build the full suffix: _YY-MM-DD or _YY-MM-DD--videoId
+    let fullSuffix = dateSuffix;
+    if (videoId && /^[a-zA-Z0-9_-]{6,}$/.test(videoId)) {
+        fullSuffix = `${dateSuffix}--${videoId}`;
+    }
+
+    // Split extension
     const lastDot = filename.lastIndexOf('.');
     const base = lastDot > 0 ? filename.slice(0, lastDot) : filename;
     const ext = lastDot > 0 ? filename.slice(lastDot) : '';
 
-    // If base already has the date suffix, return as-is
-    if (hasDateStampSuffix(base)) {
+    // If base already has BOTH date AND videoId suffix, return as-is (fully stamped)
+    if (hasVideoIdSuffix(base) && hasDateStampSuffix(base)) {
         return filename;
     }
 
-    // Truncate base if needed so total base+suffix length stays under maxBaseLen
-    const trimmedBase = base.length > (maxBaseLen - suffix.length)
-        ? base.slice(0, maxBaseLen - suffix.length)
-        : base;
+    // If base has date suffix but NO videoId, and we have a videoId to add,
+    // strip the old date suffix and re-apply with videoId
+    let cleanBase = base;
+    if (hasDateStampSuffix(base) && !hasVideoIdSuffix(base)) {
+        // Strip the existing _YY-MM-DD suffix (keep everything before it)
+        cleanBase = base.replace(/_\d{2}-\d{2}-\d{2}$/, '');
+    }
 
-    return `${trimmedBase}${suffix}${ext}`;
+    // Truncate cleanBase if needed so total base+suffix length stays under maxBaseLen
+    const trimmedBase = cleanBase.length > (maxBaseLen - fullSuffix.length)
+        ? cleanBase.slice(0, maxBaseLen - fullSuffix.length)
+        : cleanBase;
+
+    return `${trimmedBase}${fullSuffix}${ext}`;
 }
 
 /**
@@ -3265,17 +3293,30 @@ function performDiskScanForChannel(channel) {
     const channelDir = getChannelDownloadDir(channel.name);
     let downloadedFiles = [];
 
+    console.log(`[Disk Scan] Channel: "${channel.name}"`);
+    console.log(`[Disk Scan] Channel dir: ${channelDir}`);
+    console.log(`[Disk Scan] Videos in DB: ${videos.length}`);
+    console.log(`[Disk Scan] Channel dir exists: ${fs.existsSync(channelDir)}`);
+
+    // ⭐ FIX: Scan ALL video extensions, not just .mp4
+    const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mkv', '.m4a', '.mp3', '.m4v', '.mov', '.avi'];
+    const hasVideoExtension = (filename) => {
+        const lower = filename.toLowerCase();
+        return VIDEO_EXTENSIONS.some(ext => lower.endsWith(ext));
+    };
+
     // Check channel-specific directory
     if (fs.existsSync(channelDir)) {
         try {
-            const files = fs.readdirSync(channelDir)
-                .filter(file => file.toLowerCase().endsWith('.mp4'))
-                .map(file => ({
-                    name: file,
-                    path: path.join(channelDir, file),
-                    size: fs.statSync(path.join(channelDir, file)).size,
-                    modifiedAt: fs.statSync(path.join(channelDir, file)).mtime.toISOString()
-                }));
+            const allFiles = fs.readdirSync(channelDir);
+            const videoFiles = allFiles.filter(hasVideoExtension);
+            console.log(`[Disk Scan] Found ${allFiles.length} total files, ${videoFiles.length} video files in channel dir`);
+            const files = videoFiles.map(file => ({
+                name: file,
+                path: path.join(channelDir, file),
+                size: fs.statSync(path.join(channelDir, file)).size,
+                modifiedAt: fs.statSync(path.join(channelDir, file)).mtime.toISOString()
+            }));
             downloadedFiles.push(...files);
         } catch (err) {
             console.error(`[Disk Scan] Error reading ${channelDir}:`, err.message);
@@ -3285,38 +3326,132 @@ function performDiskScanForChannel(channel) {
     // Also check root DOWNLOADS_DIR if different
     if (fs.existsSync(DOWNLOADS_DIR) && path.resolve(DOWNLOADS_DIR) !== path.resolve(channelDir)) {
         try {
-            const files = fs.readdirSync(DOWNLOADS_DIR)
-                .filter(file => file.toLowerCase().endsWith('.mp4'))
-                .map(file => ({
-                    name: file,
-                    path: path.join(DOWNLOADS_DIR, file),
-                    size: fs.statSync(path.join(DOWNLOADS_DIR, file)).size,
-                    modifiedAt: fs.statSync(path.join(DOWNLOADS_DIR, file)).mtime.toISOString()
-                }));
+            const allFiles = fs.readdirSync(DOWNLOADS_DIR);
+            const videoFiles = allFiles.filter(hasVideoExtension);
+            console.log(`[Disk Scan] Found ${videoFiles.length} video files in root DOWNLOADS_DIR`);
+            const files = videoFiles.map(file => ({
+                name: file,
+                path: path.join(DOWNLOADS_DIR, file),
+                size: fs.statSync(path.join(DOWNLOADS_DIR, file)).size,
+                modifiedAt: fs.statSync(path.join(DOWNLOADS_DIR, file)).mtime.toISOString()
+            }));
             downloadedFiles.push(...files);
         } catch (err) {
             console.error(`[Disk Scan] Error reading ${DOWNLOADS_DIR}:`, err.message);
         }
     }
 
+    console.log(`[Disk Scan] Total video files found: ${downloadedFiles.length}`);
+
     const consumedFiles = new Set();
+
+    // ⭐ TRANSLATED TITLE MAPPING TABLE — baked into sync logic
+    // These 13 videos have English titles in the DB but Urdu titles on disk
+    // (or vice versa). The sync can't fuzzy-match across languages, so we
+    // map them explicitly. This runs automatically on every sync.
+    const TRANSLATED_TITLE_MAP = {
+        'a miracle herb_ reishi mushroom ganoderma and shingraf for vitality by hakeem ahmed ali from lahore.mp4': 'ایک اکسیری بوٹی ریشی مشروم گائناڈرما اور قوت باہ کے لیے اکسیری شنگرف حکیم احمد علی فرام لاہور_25-03-27.mp4',
+        'a cure for brain weakness that will remove your glasses_ tibiba madam iram mursaleen.mp4': 'دماغی کمزوری کو دور کرنے کے لیے ایسا عمل جس سے چار نمبر عینک اتر جائے طبیبہ میڈم ارم مرسلین_24-04-29.mp4',
+        'practical preparation of virility-boosting cinnabar_ verification video.mp4': 'تصدیقی ویڈیو قوت باہ کے شنگرف کی تیاری پریکٹیکل_24-04-23.mp4',
+        'successful treatment of white cataract and black cataract- not being able to see at night- by hak.mp4': 'رات کو دکھائی نہ دینا سفید موتیا اور کالا موتیا کا کامیاب علاج حکیم باوا نعیم حیدر فرام فیصل اباد_24-03-08.mp4',
+        'kidney pain will end soon- god willing- ghulam nabi sanyasi from faisalabad.mp4': 'درد گردہ فوری ختم انشاءاللہ تعالی غلام نبی سنیاسی فرام فیصل اباد_24-02-23.mp4',
+        'solution for weakness caused by diabetes and its complications by hakeem ghulam nabi sanyasi of f.mp4': 'شوگر سے پیدا ہونے والی کمزوری اور اس کے مسائل کا حل حکیم غلام نبی سنیاسی آف فیصل اباد_24-01-14.mp4',
+        'video from india confirming the death of a dynasty-breaking cell.mp4': 'دینسٹی توڑنے والے سیل کے پارے کی تصدیقی ویڈیو انڈیا سے_23-11-09.mp4',
+        'a miracle herbal formula for all types of hemorrhoids and body aches by hakeem ghulam nabi sanyas.mp4': 'ہر قسم کی بواسیر اور جسمانی دردوں کے لیے اکسیری ہربل فارمولاحکیم غلام نبی سنیاسی اف فیصل اباد_23-11-06.mp4',
+        'identification of narsal herb- a useful remedy for pregnancy- by hakim akhtar sanyasi of azad kas.mp4': 'نرسل بوٹی کی پہچان جواستقرارحمل کے لیے ایک مفید دوا ہے حکیم اختر سنیاسی اف ازادکشمیر_23-10-29.mp4',
+        'iron liver elixir- special speciality of hakeem afzal ahmed attari- manuchak manzi bahauddin.mp4': 'اکسیر جگر فولادی خاص الخاص حکیم افضال احمد عطاری مانو چک منذی بہاؤالدین_23-09-15.mp4',
+        'کچے پارے کو رنگین کرنے کا مکمل عمل.mp4': 'the complete process of coloring raw mercury_23-09-13.mp4',
+        'incomparable silver remedy for diabetes- erectile dysfunction- and azoospermia - hakeem nafees of.mp4': 'شوگر قوت باہ ایزوسپرمیا کے لئے لاجواب کشتہ چاندی -حکیم نفیس اف لاہور چاہ میراں_23-09-07.mp4',
+        'پتے کی درد فوری ختم سید حامد حسین اف شاہ کوٹ.mp4': 'immediate relief for gallbladder pain by syed hamid hussain of shahkot_23-12-23.mp4',
+        // ⭐ NEW: 2 additional translated-title pairs (added after re-analysis)
+        'مانسہرہ کے دوسرے نسخہ کا پریکٹیکل -شفیق سنیاسی اف چکوال.mp4': 'practical demonstration of the second mansehra formula - shafiq sanyasi of chakwal_23-09-11.mp4',
+        'kushta sadaf marwareedi_ a universal remedy for secret ailments in men and women by hakim ghulam.mp4': 'عورتوں اور مردوں کے پوشیدہ امراض میں یکساں کام کرنے والا کشتہ صدف مرواری دی حکیم غلام نبی سنیاسی_24-12-05.mp4',
+    };
+
+    // ⭐ FIX: Helper function to strip the _YY-MM-DD date suffix AND --videoId
+    // from a filename for fuzzy matching.
+    // "MyVideo_23-11-15--yi52DjmVEEU.mp4" → "MyVideo.mp4"
+    // "MyVideo_23-11-15.mp4" → "MyVideo.mp4"
+    // "MyVideo.mp4" → "MyVideo.mp4" (unchanged)
+    const stripDateSuffix = (filename) => {
+        if (!filename) return filename;
+        // Remove _YY-MM-DD--videoId before extension
+        let result = filename.replace(/_\d{2}-\d{2}-\d{2}--[a-zA-Z0-9_-]{11}\.(mp4|webm|mkv|m4a|mp3)$/i, '.$1');
+        // Remove _YY-MM-DD before extension (without videoId)
+        result = result.replace(/_\d{2}-\d{2}-\d{2}\.(mp4|webm|mkv|m4a|mp3)$/i, '.$1');
+        return result;
+    };
+
+    // ⭐ FIX: Helper to also check if a file starts with the expected base name
+    // (handles cases where the DB has a truncated name but the disk file has the full name)
+    const baseNamesMatch = (diskName, expectedName) => {
+        if (!diskName || !expectedName) return false;
+        // Strip extensions and compare base names (case-insensitive)
+        const diskBase = diskName.replace(/\.[^.]+$/, '').toLowerCase();
+        const expectedBase = expectedName.replace(/\.[^.]+$/, '').toLowerCase();
+        // Also strip date suffix from disk base
+        const diskBaseNoDate = diskBase.replace(/_\d{2}-\d{2}-\d{2}$/, '');
+        // Also strip " (N)" conflict suffix
+        const diskBaseClean = diskBaseNoDate.replace(/\s*\(\d+\)$/, '');
+        const expectedClean = expectedBase.replace(/\s*\(\d+\)$/, '');
+        return diskBaseClean === expectedClean;
+    };
 
     const syncResults = videos.map((video) => {
         const vidId = (video.id || video.videoId || '').toLowerCase();
         const expectedFilename = (video.finalFilename || '').toLowerCase();
+        const expectedNoDate = stripDateSuffix(expectedFilename);  // ⭐ strip date from DB name too
         const downloadFilename = (video.downloadFilename || '').toLowerCase();
         const sanitizedBase = video.sanitizedBase ? `${video.sanitizedBase.toLowerCase()}.mp4` : '';
+        const sanitizedBaseNoDate = sanitizedBase ? stripDateSuffix(sanitizedBase) : '';
         const titleSanitized = sanitizeViaPython(video.title || '').toLowerCase() + '.mp4';
+        const titleSanitizedNoDate = stripDateSuffix(titleSanitized);
 
         // Find a matching file on disk
         let matchingFile = downloadedFiles.find(f => {
             if (consumedFiles.has(f.path)) return false;
             const fname = f.name.toLowerCase();
+            const fnameNoDate = stripDateSuffix(fname);  // ⭐ strip date from disk filename
 
+            // 0. ⭐ TRANSLATED TITLE MAP — check if this DB filename has a known
+            // translated equivalent on disk (English in DB, Urdu on disk, or vice versa).
+            // This handles the 13 videos where YouTube returned English titles but the
+            // files were saved with Urdu titles (or vice versa).
+            if (expectedFilename && TRANSLATED_TITLE_MAP[expectedFilename]) {
+                const mappedDisk = TRANSLATED_TITLE_MAP[expectedFilename].toLowerCase();
+                const mappedDiskNoDate = stripDateSuffix(mappedDisk);
+                if (fname === mappedDisk || fnameNoDate === mappedDiskNoDate) {
+                    console.log(`[Disk Scan] ✅ Translated-title match: "${video.title?.substring(0, 40)}..." → ${f.name}`);
+                    return true;
+                }
+            }
+            // Also check reverse: disk file is in the map values, DB has the key
+            if (TRANSLATED_TITLE_MAP[fnameNoDate] && expectedFilename === TRANSLATED_TITLE_MAP[fnameNoDate]) return true;
+            if (TRANSLATED_TITLE_MAP[fname] && expectedFilename === TRANSLATED_TITLE_MAP[fname]) return true;
+
+            // 1. Exact match
             if (expectedFilename && fname === expectedFilename) return true;
+            // 2. Exact match with date stripped from BOTH sides
+            if (expectedNoDate && fnameNoDate === expectedNoDate) return true;
+            // 3. DB has date-stamped name, disk doesn't (or vice versa)
+            if (expectedNoDate && fname === expectedNoDate) return true;
+            if (expectedFilename && fnameNoDate === expectedFilename) return true;
+            // 4. Download filename match
             if (downloadFilename && fname === downloadFilename) return true;
+            if (downloadFilename && fnameNoDate === downloadFilename) return true;
+            // 5. Sanitized base match (exact and date-stripped)
             if (sanitizedBase && fname === sanitizedBase) return true;
+            if (sanitizedBaseNoDate && fnameNoDate === sanitizedBaseNoDate) return true;
+            if (sanitizedBaseNoDate && fname === sanitizedBaseNoDate) return true;
+            // 6. Title-sanitized match (exact and date-stripped)
             if (titleSanitized && fname === titleSanitized) return true;
+            if (titleSanitizedNoDate && fnameNoDate === titleSanitizedNoDate) return true;
+            if (titleSanitizedNoDate && fname === titleSanitizedNoDate) return true;
+            // 7. Base name fuzzy match (handles truncated names + date suffixes)
+            if (expectedFilename && baseNamesMatch(fname, expectedFilename)) return true;
+            if (sanitizedBase && baseNamesMatch(fname, sanitizedBase)) return true;
+            if (titleSanitized && baseNamesMatch(fname, titleSanitized)) return true;
+            // 8. Video ID substring match (last resort)
             if (vidId && fname.includes(vidId)) return true;
 
             return false;
@@ -3325,6 +3460,7 @@ function performDiskScanForChannel(channel) {
         const isDownloaded = !!matchingFile;
         if (isDownloaded && matchingFile) {
             consumedFiles.add(matchingFile.path);
+            console.log(`[Disk Scan] ✅ Matched: "${video.title?.substring(0, 40)}..." → ${matchingFile.name}`);
         }
 
         return {
@@ -3337,6 +3473,96 @@ function performDiskScanForChannel(channel) {
             } : null
         };
     });
+
+    // ⭐ NEW: REVERSE MATCH PASS — for any disk files that weren't consumed by the
+    // forward match, try to match them to UNMATCHED DB videos using looser criteria.
+    // This catches files that exist on disk but whose DB record has a wrong/missing
+    // finalFilename (common when files were renamed manually or by older code).
+    const unmatchedVideos = videos.filter((v, i) => !syncResults[i].isDownloaded);
+    const unconsumedFiles = downloadedFiles.filter(f => !consumedFiles.has(f.path));
+
+    if (unmatchedVideos.length > 0 && unconsumedFiles.length > 0) {
+        console.log(`[Disk Scan] 🔄 Reverse match: ${unmatchedVideos.length} unmatched videos, ${unconsumedFiles.length} unconsumed files`);
+
+        for (const diskFile of unconsumedFiles) {
+            const diskNameLower = diskFile.name.toLowerCase();
+            const diskNameNoDate = stripDateSuffix(diskNameLower);
+            const diskBaseClean = diskNameNoDate.replace(/\.[^.]+$/, '').replace(/_\d{2}-\d{2}-\d{2}$/, '').replace(/\s*\(\d+\)$/, '');
+
+            // Find the BEST matching unmatched video for this disk file
+            let bestMatch = null;
+            let bestMatchIdx = -1;
+            let bestScore = 0;
+
+            for (let vi = 0; vi < videos.length; vi++) {
+                if (syncResults[vi].isDownloaded) continue;  // skip already matched
+
+                const video = videos[vi];
+                const vidId = (video.id || video.videoId || '').toLowerCase();
+                const titleLower = (video.title || '').toLowerCase();
+                const sanitizedTitle = sanitizeViaPython(video.title || '').toLowerCase();
+
+                let score = 0;
+
+                // Check if disk filename contains the video ID
+                if (vidId && diskNameLower.includes(vidId)) {
+                    score = 100;  // strongest match
+                }
+                // Check if sanitized title matches disk base (exact)
+                else if (sanitizedTitle && diskBaseClean === sanitizedTitle.replace(/\.[^.]+$/, '').replace(/\s*\(\d+\)$/, '')) {
+                    score = 90;
+                }
+                // Check if disk filename contains the title (substring match)
+                else if (titleLower && titleLower.length > 10) {
+                    const titleClean = titleLower.replace(/[^\w\s]/g, '').trim();
+                    const diskClean = diskBaseClean.replace(/[^\w\s]/g, '').trim();
+                    if (titleClean && diskClean && (diskClean.includes(titleClean) || titleClean.includes(diskClean))) {
+                        score = 70;
+                    }
+                }
+
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMatch = video;
+                    bestMatchIdx = vi;
+                }
+            }
+
+            if (bestMatch && bestScore >= 70) {
+                console.log(`[Disk Scan] ✅ Reverse match (score ${bestScore}): "${bestMatch.title?.substring(0, 40)}..." → ${diskFile.name}`);
+                syncResults[bestMatchIdx] = {
+                    id: bestMatch.id || bestMatch.videoId,
+                    isDownloaded: true,
+                    fileInfo: {
+                        fileName: diskFile.name,
+                        filePath: diskFile.path,
+                        fileSize: diskFile.size
+                    }
+                };
+                consumedFiles.add(diskFile.path);
+                // Update the video's finalFilename so future syncs find it
+                bestMatch.finalFilename = diskFile.name;
+                bestMatch.filePath = diskFile.path;
+            }
+        }
+    }
+
+    // Log unmatched disk files for diagnostics
+    const stillUnconsumed = downloadedFiles.filter(f => !consumedFiles.has(f.path));
+    if (stillUnconsumed.length > 0) {
+        console.log(`[Disk Scan] ⚠️ ${stillUnconsumed.length} files on disk not matched to any DB video:`);
+        stillUnconsumed.slice(0, 10).forEach(f => {
+            console.log(`[Disk Scan]    📄 ${f.name} (${f.size} bytes)`);
+        });
+        if (stillUnconsumed.length > 10) {
+            console.log(`[Disk Scan]    ... and ${stillUnconsumed.length - 10} more`);
+        }
+    }
+
+    // Log unmatched DB videos for diagnostics
+    const stillUnmatched = syncResults.filter(r => !r.isDownloaded).length;
+    const matchedCount = syncResults.filter(r => r.isDownloaded).length;
+    console.log(`[Disk Scan] ✅ Matched: ${matchedCount}/${videos.length}, unmatched: ${stillUnmatched}`);
 
     const videoStatuses = syncResults.map(v => ({
         videoId: v.id,
@@ -4528,7 +4754,9 @@ async function executeDownloadWithFormat(downloadId, videoUrl, outputPath, forma
                     const applyDateStampAndFinish = (uploadDate) => {
                         try {
                             if (uploadDate) {
-                                const stampedFilename = applyDateStampToFilename(currentFilename, uploadDate);
+                                // ⭐ Pass vidId so the video ID is appended to the filename
+                                // (future-proofing sync matching across languages)
+                                const stampedFilename = applyDateStampToFilename(currentFilename, uploadDate, undefined, vidId);
                                 if (stampedFilename && stampedFilename !== currentFilename) {
                                     const safeStampedName = ensureUniqueOnDisk(outputDir, stampedFilename);
                                     const stampedPath = path.join(outputDir, safeStampedName);
@@ -6003,7 +6231,8 @@ async function applyDateStampsForChannel(channel, res) {
             if (!item) return;
             pendingMap.delete(vidId);  // mark as handled
 
-            const newName = applyDateStampToFilename(item.currentName, uploadDate);
+            // ⭐ Pass vidId so the video ID is appended to the filename
+            const newName = applyDateStampToFilename(item.currentName, uploadDate, undefined, vidId);
             if (newName && newName !== item.currentName) {
                 const safeNewName = ensureUniqueOnDisk(channelDir, newName);
                 const newPath = path.join(channelDir, safeNewName);
@@ -6205,7 +6434,8 @@ async function applyDateStampsForSingleFileFolder(res) {
             if (!item) return;
             pendingMap.delete(vidId);
 
-            const newName = applyDateStampToFilename(item.filename, uploadDate);
+            // ⭐ Pass vidId so the video ID is appended to the filename
+            const newName = applyDateStampToFilename(item.filename, uploadDate, undefined, vidId);
             if (newName && newName !== item.filename) {
                 const safeNewName = ensureUniqueOnDisk(singleDir, newName);
                 const newPath = path.join(singleDir, safeNewName);
@@ -6291,6 +6521,228 @@ async function applyDateStampsForSingleFileFolder(res) {
         failed
     };
 }
+
+// ⭐ NEW: POST /api/channels/:id/update-database — Permanently update DB to match
+// files on disk. Updates finalFilename for matched videos, marks as downloaded,
+// and adds orphaned disk files as new DB entries. Saves DB permanently.
+app.post('/api/channels/:id/update-database', async (req, res) => {
+    const { id } = req.params;
+    console.log(`\n[Update DB] POST /api/channels/${id}/update-database`);
+
+    if (!savedChannels.has(id)) {
+        return res.status(404).json({ success: false, error: 'Channel not found' });
+    }
+    const channel = savedChannels.get(id);
+
+    // SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    const heartbeat = setInterval(() => {
+        try { res.write(': heartbeat\n\n'); } catch (e) {}
+    }, 15000);
+
+    try {
+        const videos = channel.videos || [];
+        const channelDir = getChannelDownloadDir(channel.name);
+
+        // ⭐ FIX: Scan ALL video extensions
+        const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mkv', '.m4a', '.mp3', '.m4v', '.mov', '.avi'];
+        const hasVideoExtension = (filename) => {
+            const lower = filename.toLowerCase();
+            return VIDEO_EXTENSIONS.some(ext => lower.endsWith(ext));
+        };
+
+        // Scan disk
+        let downloadedFiles = [];
+        if (fs.existsSync(channelDir)) {
+            try {
+                downloadedFiles = fs.readdirSync(channelDir)
+                    .filter(hasVideoExtension)
+                    .map(file => ({
+                        name: file,
+                        path: path.join(channelDir, file),
+                        size: fs.statSync(path.join(channelDir, file)).size
+                    }));
+            } catch (err) {
+                console.error(`[Update DB] Error reading ${channelDir}:`, err.message);
+            }
+        }
+        // Also check root DOWNLOADS_DIR
+        if (fs.existsSync(DOWNLOADS_DIR) && path.resolve(DOWNLOADS_DIR) !== path.resolve(channelDir)) {
+            try {
+                const rootFiles = fs.readdirSync(DOWNLOADS_DIR)
+                    .filter(hasVideoExtension)
+                    .map(file => ({
+                        name: file,
+                        path: path.join(DOWNLOADS_DIR, file),
+                        size: fs.statSync(path.join(DOWNLOADS_DIR, file)).size
+                    }));
+                downloadedFiles.push(...rootFiles);
+            } catch (err) {
+                console.error(`[Update DB] Error reading ${DOWNLOADS_DIR}:`, err.message);
+            }
+        }
+
+        sseSend(res, 'start', {
+            channelId: channel.id,
+            channelName: channel.name,
+            totalVideos: videos.length,
+            diskFiles: downloadedFiles.length,
+            message: `Scanning ${downloadedFiles.length} disk files against ${videos.length} DB videos`
+        });
+
+        const stripDateSuffix = (filename) => {
+            if (!filename) return filename;
+            let result = filename.replace(/_\d{2}-\d{2}-\d{2}--[a-zA-Z0-9_-]{11}\.(mp4|webm|mkv|m4a|mp3)$/i, '.$1');
+            result = result.replace(/_\d{2}-\d{2}-\d{2}\.(mp4|webm|mkv|m4a|mp3)$/i, '.$1');
+            return result;
+        };
+
+        const consumedFiles = new Set();
+        let updated = 0;
+        let alreadyOk = 0;
+        let notOnDisk = 0;
+        let orphanedAdded = 0;
+        let processed = 0;
+
+        // Phase 1: Match DB videos to disk files
+        for (const video of videos) {
+            processed++;
+            const vidId = (video.id || video.videoId || '').toLowerCase();
+            const expectedFilename = (video.finalFilename || '').toLowerCase();
+            const expectedNoDate = stripDateSuffix(expectedFilename);
+            const sanitizedBase = video.sanitizedBase ? `${video.sanitizedBase.toLowerCase()}.mp4` : '';
+            const titleSanitized = sanitizeViaPython(video.title || '').toLowerCase() + '.mp4';
+
+            let matchingFile = downloadedFiles.find(f => {
+                if (consumedFiles.has(f.path)) return false;
+                const fname = f.name.toLowerCase();
+                const fnameNoDate = stripDateSuffix(fname);
+
+                if (expectedFilename && fname === expectedFilename) return true;
+                if (expectedNoDate && fnameNoDate === expectedNoDate) return true;
+                if (expectedNoDate && fname === expectedNoDate) return true;
+                if (sanitizedBase && fname === sanitizedBase) return true;
+                if (sanitizedBase && fnameNoDate === stripDateSuffix(sanitizedBase)) return true;
+                if (titleSanitized && fname === titleSanitized) return true;
+                if (titleSanitized && fnameNoDate === stripDateSuffix(titleSanitized)) return true;
+                if (vidId && fname.includes(vidId)) return true;
+                return false;
+            });
+
+            if (matchingFile) {
+                consumedFiles.add(matchingFile.path);
+                // Update DB record to match disk reality
+                if (video.finalFilename !== matchingFile.name) {
+                    video.finalFilename = matchingFile.name;
+                    updated++;
+                    console.log(`[Update DB] 📝 Updated: "${video.title?.substring(0, 40)}..." → ${matchingFile.name}`);
+                } else {
+                    alreadyOk++;
+                }
+                video.filePath = matchingFile.path;
+                video.downloadStatus = 'completed';
+                video.syncStatus = 'downloaded';
+            } else {
+                notOnDisk++;
+                video.syncStatus = 'new';
+                if (video.downloadStatus === 'completed') {
+                    video.downloadStatus = null;
+                }
+            }
+
+            if (processed % 50 === 0 || processed === videos.length) {
+                sseSend(res, 'progress', {
+                    processed,
+                    total: videos.length,
+                    percentage: Math.round((processed / videos.length) * 50),  // Phase 1 = 0-50%
+                    updated,
+                    alreadyOk,
+                    notOnDisk,
+                    orphanedAdded,
+                    message: `Matching DB videos: ${processed}/${videos.length}`
+                });
+            }
+        }
+
+        // Phase 2: Add orphaned disk files as new DB entries
+        const orphanedFiles = downloadedFiles.filter(f => !consumedFiles.has(f.path));
+        if (orphanedFiles.length > 0) {
+            console.log(`[Update DB] 📦 Adding ${orphanedFiles.length} orphaned files as new DB entries`);
+            sseSend(res, 'orphaned_start', {
+                count: orphanedFiles.length,
+                message: `Adding ${orphanedFiles.length} orphaned disk files to DB`
+            });
+
+            for (const orphan of orphanedFiles) {
+                // Extract video ID from filename if present (--videoId pattern)
+                const vidIdMatch = orphan.name.match(/--([a-zA-Z0-9_-]{11})\.(mp4|webm|mkv)$/i);
+                const newVideo = {
+                    id: vidIdMatch ? vidIdMatch[1] : `disk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                    title: orphan.name.replace(/\.[^.]+$/, ''),  // filename without extension
+                    finalFilename: orphan.name,
+                    filePath: orphan.path,
+                    downloadStatus: 'completed',
+                    syncStatus: 'downloaded',
+                    uploadDate: null
+                };
+                videos.push(newVideo);
+                orphanedAdded++;
+                console.log(`[Update DB] ➕ Added orphan: ${orphan.name}`);
+
+                sseSend(res, 'orphaned', {
+                    filename: orphan.name,
+                    count: orphanedAdded,
+                    total: orphanedFiles.length
+                });
+            }
+        }
+
+        // Save DB permanently
+        channel.videos = videos;
+        savedChannels.set(channel.id, channel);
+        saveDatabase();
+
+        clearInterval(heartbeat);
+
+        const total = videos.length;
+        const downloaded = updated + alreadyOk + orphanedAdded;
+
+        sseSend(res, 'done', {
+            channelId: channel.id,
+            channelName: channel.name,
+            totalVideos: total,
+            diskFiles: downloadedFiles.length,
+            updated: updated,
+            alreadyOk: alreadyOk,
+            notOnDisk: notOnDisk,
+            orphanedAdded: orphanedAdded,
+            downloaded: downloaded,
+            message: `DB updated: ${downloaded}/${total} marked as downloaded (${updated} filenames updated, ${orphanedAdded} orphaned files added)`
+        });
+
+        sseSend(res, 'complete', {
+            success: true,
+            channelId: channel.id,
+            totalVideos: total,
+            downloaded: downloaded,
+            updated: updated,
+            orphanedAdded: orphanedAdded,
+            message: `DB updated: ${downloaded}/${total} downloaded`
+        });
+
+        res.end();
+    } catch (err) {
+        console.error(`[Update DB] ❌ Error:`, err.message);
+        clearInterval(heartbeat);
+        sseSend(res, 'error', { message: err.message });
+        res.end();
+    }
+});
 
 // POST /api/channels/:id/fix-dates — Add _YY-MM-DD suffix to existing files for one channel
 app.post('/api/channels/:id/fix-dates', async (req, res) => {
