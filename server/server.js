@@ -902,8 +902,12 @@ try {
 // =============================================================================
 // PERSISTENT DATABASE STORAGE & MASTER SYNC TRACKING
 // =============================================================================
+// ⭐ MIGRATED TO SQLITE: The database is now stored in db/database.db (SQLite)
+// instead of db_channels.json (JSON). The JSON file is auto-migrated on first
+// run and preserved as db_channels.json.migrated.
+// =============================================================================
 
-const DB_FILE = path.join(__dirname, 'db_channels.json');
+const sqliteDb = require('./db/database');
 const savedChannels = new Map();
 let initialDiskSyncDone = false;
 
@@ -915,35 +919,23 @@ const _inFlightDownloadUrls = new Set();
 
 function loadDatabase() {
     try {
-        if (fs.existsSync(DB_FILE)) {
-            const data = fs.readFileSync(DB_FILE, 'utf8');
-            const parsed = JSON.parse(data);
-            if (Array.isArray(parsed)) {
-                parsed.forEach(ch => {
-                    if (ch && ch.id) {
-                        const existing = Array.from(savedChannels.values()).find(
-                            existingCh => (ch.youtubeId && existingCh.youtubeId === ch.youtubeId) ||
-                                          (ch.url && existingCh.url === ch.url)
-                        );
-                        if (!existing) {
-                            savedChannels.set(ch.id, ch);
-                        }
-                    }
-                });
-                console.log(`[Database] Loaded ${savedChannels.size} unique channels from DB file.`);
-            }
+        const channels = sqliteDb.loadDatabase();
+        // Copy into our in-memory Map (same as before, just sourced from SQLite)
+        for (const [id, ch] of channels.entries()) {
+            savedChannels.set(id, ch);
         }
+        console.log(`[Database] Loaded ${savedChannels.size} channels from SQLite.`);
     } catch (e) {
-        console.error('[Database] Failed to load DB file:', e.message);
+        console.error('[Database] Failed to load from SQLite:', e.message);
     }
 }
 
 function saveDatabase() {
     try {
-        const channelsArr = Array.from(savedChannels.values());
-        fs.writeFileSync(DB_FILE, JSON.stringify(channelsArr, null, 2), 'utf8');
+        // ⭐ SQLite: Save all channels in a single transaction
+        sqliteDb.saveAllChannels(savedChannels);
     } catch (e) {
-        console.error('[Database] Failed to save DB file:', e.message);
+        console.error('[Database] Failed to save to SQLite:', e.message);
     }
 }
 
@@ -4028,10 +4020,11 @@ app.post('/api/channels/:id/stop', (req, res) => {
 app.delete('/api/channels/:id', (req, res) => {
     const { id } = req.params;
     console.log('\n[Channels] DELETE /api/channels/' + id);
-    
+
     if (savedChannels.has(id)) {
         savedChannels.delete(id);
-        saveDatabase();
+        // ⭐ SQLite: Also delete from the database directly (faster than full save)
+        try { sqliteDb.deleteChannel(id); } catch (e) { console.warn('[Database] Delete failed:', e.message); }
         console.log('[Channels] ✅ Channel deleted:', id);
         res.json({
             success: true,
