@@ -1,4 +1,4 @@
-// ===== CRASH GUARD =====
+﻿// ===== CRASH GUARD =====
 process.on('unhandledRejection', (reason, promise) => {
     console.error('[FATAL-GUARD] Unhandled Rejection:', reason);
 });
@@ -8,6 +8,131 @@ process.on('uncaughtException', (err) => {
 process.stdout.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 process.stderr.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 // =======================
+
+// =============================================================================
+// INTERNET CONNECTIVITY MONITOR
+// =============================================================================
+const net = require('net');
+const dns = require('dns');
+
+const NETWORK_CHECK_INTERVAL_MS = 5000;
+const NETWORK_CHECK_FAST_MS = 2000;
+const NETWORK_PROBE_TIMEOUT_MS = 3000;
+const NETWORK_HOSTS = [
+    { host: 'www.youtube.com', port: 443 },
+    { host: 'www.google.com', port: 443 },
+    { host: '1.1.1.1', port: 443 },
+];
+const NETWORK_FAILS_BEFORE_OFFLINE = 2;
+const NETWORK_SUCCESSES_BEFORE_ONLINE = 1;
+
+const networkMonitor = {
+    online: true,
+    lastCheck: null,
+    lastOnlineAt: Date.now(),
+    lastOfflineAt: null,
+    consecutiveFails: 0,
+    consecutiveSuccesses: 0,
+    listeners: { online: [], offline: [] },
+    _timer: null,
+    _probeInFlight: false,
+
+    on(event, fn) {
+        if (this.listeners[event]) this.listeners[event].push(fn);
+    },
+    _emit(event, payload) {
+        for (const fn of (this.listeners[event] || [])) {
+            try { fn(payload); }
+            catch (e) { console.error('[Network] listener error (' + event + '):', e.message); }
+        }
+    },
+    isOnline() { return this.online; },
+
+    _probeOnce() {
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (ok) => { if (settled) return; settled = true; resolve(ok); };
+            let idx = 0;
+            const tryNext = () => {
+                if (idx >= NETWORK_HOSTS.length) return finish(false);
+                const { host, port } = NETWORK_HOSTS[idx++];
+                const sock = net.connect({ host, port });
+                const timer = setTimeout(() => {
+                    try { sock.destroy(); } catch {}
+                    tryNext();
+                }, NETWORK_PROBE_TIMEOUT_MS);
+                sock.once('connect', () => {
+                    clearTimeout(timer);
+                    try { sock.destroy(); } catch {}
+                    finish(true);
+                });
+                sock.once('error', () => {
+                    clearTimeout(timer);
+                    try { sock.destroy(); } catch {}
+                    tryNext();
+                });
+            };
+            tryNext();
+        });
+    },
+
+    async _tick() {
+        if (this._probeInFlight) return;
+        this._probeInFlight = true;
+        try {
+            const ok = await this._probeOnce();
+            this.lastCheck = Date.now();
+            if (ok) {
+                this.consecutiveSuccesses++;
+                this.consecutiveFails = 0;
+                if (!this.online && this.consecutiveSuccesses >= NETWORK_SUCCESSES_BEFORE_ONLINE) {
+                    this.online = true;
+                    this.lastOnlineAt = Date.now();
+                    console.log('\n[Network] \u2705 Internet connection RESTORED');
+                    this._emit('online', { at: this.lastOnlineAt });
+                }
+            } else {
+                this.consecutiveFails++;
+                this.consecutiveSuccesses = 0;
+                if (this.online && this.consecutiveFails >= NETWORK_FAILS_BEFORE_OFFLINE) {
+                    this.online = false;
+                    this.lastOfflineAt = Date.now();
+                    console.log('\n[Network] \u274c Internet connection LOST');
+                    this._emit('offline', { at: this.lastOfflineAt });
+                }
+            }
+        } catch (e) {
+        } finally {
+            this._probeInFlight = false;
+            const delay = this.online ? NETWORK_CHECK_INTERVAL_MS : NETWORK_CHECK_FAST_MS;
+            this._timer = setTimeout(() => this._tick(), delay);
+        }
+    },
+
+    start() {
+        if (this._timer) return;
+        console.log('[Network] Monitor started');
+        this._tick();
+    },
+    stop() {
+        if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+    },
+    status() {
+        return {
+            online: this.online,
+            lastCheck: this.lastCheck,
+            lastOnlineAt: this.lastOnlineAt,
+            lastOfflineAt: this.lastOfflineAt,
+            consecutiveFails: this.consecutiveFails,
+            consecutiveSuccesses: this.consecutiveSuccesses,
+        };
+    }
+};
+
+// =============================================================================
+// ACTIVE CHILD PROCESS REGISTRY
+// =============================================================================
+const activeChildProcesses = new Map();
 
 const express = require('express');
 const cors = require('cors');
@@ -19,14 +144,14 @@ const fs = require('fs');
 const os = require('os');
 
 // =============================================================================
-// ⭐ CRITICAL FIX: Force UTF-8 encoding on Windows
+// â­ CRITICAL FIX: Force UTF-8 encoding on Windows
 // =============================================================================
 if (process.platform === 'win32') {
     process.env.NODE_ENV = process.env.NODE_ENV || 'production';
     if (!process.env.PYTHONIOENCODING) {
         process.env.PYTHONIOENCODING = 'utf-8';
     }
-    console.log('[Init] ✅ Windows UTF-8 mode enabled (PYTHONIOENCODING=utf-8)');
+    console.log('[Init] âœ… Windows UTF-8 mode enabled (PYTHONIOENCODING=utf-8)');
 }
 
 // =============================================================================
@@ -37,7 +162,7 @@ const session = require('express-session');
 const rateLimit = require('express-rate-limit');
 
 // =============================================================================
-// ⭐ FIX #3: Cookie path discovery — check BOTH server/cookies.txt and ../cookies.txt
+// â­ FIX #3: Cookie path discovery â€” check BOTH server/cookies.txt and ../cookies.txt
 // =============================================================================
 function resolveCookieFilePath() {
     if (process.env.COOKIE_FILE_PATH) return process.env.COOKIE_FILE_PATH;
@@ -47,7 +172,7 @@ function resolveCookieFilePath() {
 
     if (fs.existsSync(serverLocal)) return serverLocal;
     if (fs.existsSync(projectRoot)) return projectRoot;
-    // Neither exists — default to server-local (matches bootstrap behavior)
+    // Neither exists â€” default to server-local (matches bootstrap behavior)
     return serverLocal;
 }
 
@@ -62,20 +187,20 @@ const AUTH_CONFIG = {
 
 function validateAuthConfig() {
     console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║  🔐 Authentication Configuration                              ║
-╠══════════════════════════════════════════════════════════════╣
-║  Username: ${AUTH_CONFIG.username}
-║  Password: ${'*'.repeat(AUTH_CONFIG.password.length)} (hidden)
-║  Session Duration: ${(AUTH_CONFIG.sessionMaxAge / (1000 * 60 * 60 * 24)).toFixed(1)} days
-║                                                              ║
-║  💡 To change credentials, edit this file (server.js)       ║
-║     and modify the AUTH_CONFIG object above                 ║
-╚══════════════════════════════════════════════════════════════╝
+â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+â•‘  ðŸ” Authentication Configuration                              â•‘
+â• â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•£
+â•‘  Username: ${AUTH_CONFIG.username}
+â•‘  Password: ${'*'.repeat(AUTH_CONFIG.password.length)} (hidden)
+â•‘  Session Duration: ${(AUTH_CONFIG.sessionMaxAge / (1000 * 60 * 60 * 24)).toFixed(1)} days
+â•‘                                                              â•‘
+â•‘  ðŸ’¡ To change credentials, edit this file (server.js)       â•‘
+â•‘     and modify the AUTH_CONFIG object above                 â•‘
+â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     `);
 
     if (AUTH_CONFIG.username === 'admin' && AUTH_CONFIG.password === 'password123') {
-        console.warn('⚠️  WARNING: You are using default credentials!');
+        console.warn('âš ï¸  WARNING: You are using default credentials!');
         console.warn('   It is recommended to change them in server.js for better security.\n');
     }
 }
@@ -136,7 +261,7 @@ function findIndexHtml() {
 }
 
 // =============================================================================
-// ⭐ FIX #6: Resolve absolute path to yt-dlp binary ONCE at startup
+// â­ FIX #6: Resolve absolute path to yt-dlp binary ONCE at startup
 // =============================================================================
 let YTDLP_BIN = process.env.YTDLP_PATH || 'yt-dlp';
 
@@ -154,7 +279,7 @@ function detectYtDlpBinary() {
         const first = out.split(/\r?\n/).map(l => l.trim()).filter(Boolean)[0];
         if (first && fs.existsSync(first)) {
             YTDLP_BIN = first;
-            console.log(`[Init] ✅ yt-dlp resolved (PATH): ${YTDLP_BIN}`);
+            console.log(`[Init] âœ… yt-dlp resolved (PATH): ${YTDLP_BIN}`);
             return YTDLP_BIN;
         }
     } catch (e) { /* continue */ }
@@ -173,7 +298,7 @@ function detectYtDlpBinary() {
             }).trim();
             if (out && fs.existsSync(out)) {
                 YTDLP_BIN = out;
-                console.log(`[Init] ✅ yt-dlp resolved (via ${py}): ${YTDLP_BIN}`);
+                console.log(`[Init] âœ… yt-dlp resolved (via ${py}): ${YTDLP_BIN}`);
                 return YTDLP_BIN;
             }
         } catch (e) { /* try next */ }
@@ -197,27 +322,27 @@ function detectYtDlpBinary() {
     for (const p of probes) {
         if (fs.existsSync(p)) {
             YTDLP_BIN = p;
-            console.log(`[Init] ✅ yt-dlp found by direct probe: ${YTDLP_BIN}`);
+            console.log(`[Init] âœ… yt-dlp found by direct probe: ${YTDLP_BIN}`);
             return YTDLP_BIN;
         }
     }
 
-    console.log('[Init] ⚠️ Could not resolve absolute yt-dlp path — using bare name "yt-dlp"');
+    console.log('[Init] âš ï¸ Could not resolve absolute yt-dlp path â€” using bare name "yt-dlp"');
     YTDLP_BIN = 'yt-dlp';
     return YTDLP_BIN;
 }
 
 // =============================================================================
-// ⭐ FIX: Detect Node binary explicitly (used for --js-runtimes)
+// â­ FIX: Detect Node binary explicitly (used for --js-runtimes)
 // =============================================================================
 let NODE_BIN = 'node';
 
 function detectNodeBinary() {
-    // process.execPath is guaranteed to be a working Node executable — we're
+    // process.execPath is guaranteed to be a working Node executable â€” we're
     // running under it right now.
     if (process.execPath && /node(\.exe)?$/i.test(process.execPath)) {
         NODE_BIN = process.execPath;
-        console.log(`[Init] ✅ Node resolved from process: ${NODE_BIN}`);
+        console.log(`[Init] âœ… Node resolved from process: ${NODE_BIN}`);
         return NODE_BIN;
     }
     try {
@@ -226,16 +351,16 @@ function detectNodeBinary() {
         const first = out.split(/\r?\n/).map(l => l.trim()).filter(Boolean)[0];
         if (first && fs.existsSync(first)) {
             NODE_BIN = first;
-            console.log(`[Init] ✅ Node resolved: ${NODE_BIN}`);
+            console.log(`[Init] âœ… Node resolved: ${NODE_BIN}`);
             return NODE_BIN;
         }
     } catch (e) { /* fall through */ }
-    console.log('[Init] ⚠️ Node not resolved — using bare "node"');
+    console.log('[Init] âš ï¸ Node not resolved â€” using bare "node"');
     return NODE_BIN;
 }
 
 // =============================================================================
-// ⭐ FIX #2: Global yt-dlp base flags (JS runtime for signature/n challenge)
+// â­ FIX #2: Global yt-dlp base flags (JS runtime for signature/n challenge)
 // =============================================================================
 // These are `let` so we can populate them AFTER detectNodeBinary() runs.
 let YTDLP_GLOBAL_FLAGS_ARR = ['--js-runtimes', 'node'];
@@ -251,7 +376,7 @@ function withGlobalFlags(cmdStr) {
 }
 
 // =============================================================================
-// ⭐ FIX: FFmpeg detection — check PATH, then imageio-ffmpeg bundled binary
+// â­ FIX: FFmpeg detection â€” check PATH, then imageio-ffmpeg bundled binary
 // =============================================================================
 let FFMPEG_AVAILABLE = false;
 let FFMPEG_PATH = null;
@@ -262,7 +387,7 @@ function detectFfmpeg() {
         const out = execSync('ffmpeg -version', { stdio: 'pipe', encoding: 'utf-8' })
             .split('\n')[0].trim();
         FFMPEG_AVAILABLE = true;
-        console.log('[Init] ✅ FFmpeg available on PATH:', out);
+        console.log('[Init] âœ… FFmpeg available on PATH:', out);
         return;
     } catch (e) { /* continue */ }
 
@@ -286,14 +411,14 @@ function detectFfmpeg() {
                 if (!process.env.PATH.includes(dir)) {
                     process.env.PATH = dir + path.delimiter + process.env.PATH;
                 }
-                console.log('[Init] ✅ FFmpeg found via imageio-ffmpeg:', FFMPEG_PATH);
+                console.log('[Init] âœ… FFmpeg found via imageio-ffmpeg:', FFMPEG_PATH);
                 console.log('[Init]    Prepended to PATH so yt-dlp can find it too');
                 return;
             }
         } catch (e) { /* try next python */ }
     }
 
-    console.log('[Init] ⚠️ FFmpeg not found - merging DASH streams will fail');
+    console.log('[Init] âš ï¸ FFmpeg not found - merging DASH streams will fail');
 }
 
 // =============================================================================
@@ -415,7 +540,7 @@ function invalidateCookiesFileCache() {
 function logMissingAuthCookies() {
     const cookiePath = AUTH_CONFIG.cookieFilePath;
     if (!cookiePath || !fs.existsSync(cookiePath)) {
-        console.error('[Auth Cookies] ❌ cookies.txt file does not exist at:', cookiePath);
+        console.error('[Auth Cookies] âŒ cookies.txt file does not exist at:', cookiePath);
         return;
     }
 
@@ -423,7 +548,7 @@ function logMissingAuthCookies() {
     try {
         content = fs.readFileSync(cookiePath, 'utf8');
     } catch (err) {
-        console.error('[Auth Cookies] ❌ Cannot read cookies.txt:', err.message);
+        console.error('[Auth Cookies] âŒ Cannot read cookies.txt:', err.message);
         return;
     }
 
@@ -452,23 +577,23 @@ function logMissingAuthCookies() {
         if (found[name]) {
             const info = found[name];
             if (info.expired) {
-                console.error(`[Auth Cookies]   ❌ ${name}: EXPIRED`);
+                console.error(`[Auth Cookies]   âŒ ${name}: EXPIRED`);
             } else if (info.expiresInDays !== null) {
-                console.error(`[Auth Cookies]   ✅ ${name}: valid (expires in ${info.expiresInDays} day(s))`);
+                console.error(`[Auth Cookies]   âœ… ${name}: valid (expires in ${info.expiresInDays} day(s))`);
             } else {
-                console.error(`[Auth Cookies]   ✅ ${name}: valid (session cookie)`);
+                console.error(`[Auth Cookies]   âœ… ${name}: valid (session cookie)`);
             }
         } else {
-            console.error(`[Auth Cookies]   ❌ ${name}: MISSING`);
+            console.error(`[Auth Cookies]   âŒ ${name}: MISSING`);
         }
     });
 
     const missing = criticalCookies.filter(n => !found[n]);
     const expired = criticalCookies.filter(n => found[n] && found[n].expired);
     if (missing.length > 0 || expired.length > 0) {
-        console.error(`[Auth Cookies] ⚠️ ${missing.length} missing, ${expired.length} expired — re-export cookies.txt`);
+        console.error(`[Auth Cookies] âš ï¸ ${missing.length} missing, ${expired.length} expired â€” re-export cookies.txt`);
     } else {
-        console.error('[Auth Cookies] ✅ All critical YouTube cookies are present and valid');
+        console.error('[Auth Cookies] âœ… All critical YouTube cookies are present and valid');
     }
 }
 
@@ -506,7 +631,7 @@ function repairCookiesFile(cookiePath) {
         const fields = rawLine.split('\t');
 
         if (fields.length < 7) {
-            console.warn(`[repairCookiesFile] Line ${i + 1}: only ${fields.length} fields (need 7) — skipping line`);
+            console.warn(`[repairCookiesFile] Line ${i + 1}: only ${fields.length} fields (need 7) â€” skipping line`);
             continue;
         }
 
@@ -520,7 +645,7 @@ function repairCookiesFile(cookiePath) {
         if (flag !== expectedFlag) {
             correctedFlag = expectedFlag;
             fixedCount++;
-            console.log(`[repairCookiesFile] Line ${i + 1}: domain="${domain}" flag="${flag}" → "${correctedFlag}"`);
+            console.log(`[repairCookiesFile] Line ${i + 1}: domain="${domain}" flag="${flag}" â†’ "${correctedFlag}"`);
         }
 
         fields[1] = correctedFlag;
@@ -528,7 +653,7 @@ function repairCookiesFile(cookiePath) {
     }
 
     if (fixedCount === 0) {
-        console.log(`[repairCookiesFile] ✅ No format issues found — file is already valid`);
+        console.log(`[repairCookiesFile] âœ… No format issues found â€” file is already valid`);
         return {
             repaired: false,
             reason: 'No issues found',
@@ -541,16 +666,16 @@ function repairCookiesFile(cookiePath) {
     const backupPath = cookiePath + '.bak.' + timestamp;
     try {
         fs.copyFileSync(cookiePath, backupPath);
-        console.log(`[repairCookiesFile] 📦 Backup created: ${backupPath}`);
+        console.log(`[repairCookiesFile] ðŸ“¦ Backup created: ${backupPath}`);
     } catch (err) {
-        console.error(`[repairCookiesFile] ❌ Failed to create backup: ${err.message}`);
+        console.error(`[repairCookiesFile] âŒ Failed to create backup: ${err.message}`);
         return { repaired: false, reason: 'Backup failed: ' + err.message };
     }
 
     try {
         fs.writeFileSync(cookiePath, fixedLines.join('\n'), 'utf8');
         invalidateCookiesFileCache();
-        console.log(`[repairCookiesFile] ✅ Repaired ${fixedCount} cookie line(s) — file saved`);
+        console.log(`[repairCookiesFile] âœ… Repaired ${fixedCount} cookie line(s) â€” file saved`);
         return {
             repaired: true,
             fixedCount,
@@ -559,7 +684,7 @@ function repairCookiesFile(cookiePath) {
             backupPath
         };
     } catch (err) {
-        console.error(`[repairCookiesFile] ❌ Failed to write repaired file: ${err.message}`);
+        console.error(`[repairCookiesFile] âŒ Failed to write repaired file: ${err.message}`);
         return { repaired: false, reason: 'Write failed: ' + err.message };
     }
 }
@@ -592,7 +717,7 @@ function autoExtractCookiesViaPython(options = {}) {
             return;
         }
 
-        console.log(`[AutoExtract] 🐍 Spawning extract_cookies.py (browser=${browser})`);
+        console.log(`[AutoExtract] ðŸ Spawning extract_cookies.py (browser=${browser})`);
         console.log(`[AutoExtract]    Script: ${scriptPath}`);
         console.log(`[AutoExtract]    Output: ${cookiePath}`);
 
@@ -635,7 +760,7 @@ function autoExtractCookiesViaPython(options = {}) {
                 const text = data.toString();
                 stdout += text;
                 text.split('\n').forEach(line => {
-                    if (line.trim()) console.log(`[AutoExtract] 🐍 ${line.trim()}`);
+                    if (line.trim()) console.log(`[AutoExtract] ðŸ ${line.trim()}`);
                 });
             });
 
@@ -660,11 +785,11 @@ function autoExtractCookiesViaPython(options = {}) {
                 settled = true;
 
                 if (code === 0) {
-                    console.log(`[AutoExtract] ✅ Python script completed successfully`);
+                    console.log(`[AutoExtract] âœ… Python script completed successfully`);
                     invalidateCookiesFileCache();
                     if (fs.existsSync(cookiePath)) {
                         const stats = fs.statSync(cookiePath);
-                        console.log(`[AutoExtract] ✅ cookies.txt created: ${stats.size} bytes`);
+                        console.log(`[AutoExtract] âœ… cookies.txt created: ${stats.size} bytes`);
                         resolve({
                             success: true,
                             output: stdout,
@@ -715,7 +840,7 @@ function autoExtractCookiesViaPython(options = {}) {
 }
 
 // =============================================================================
-// STRATEGY 4 — Refresh cookies via Edge browse (auto-recovery)
+// STRATEGY 4 â€” Refresh cookies via Edge browse (auto-recovery)
 // =============================================================================
 
 const STRATEGY4_COOLDOWN_MS = 5 * 60 * 1000;
@@ -771,14 +896,14 @@ async function refreshCookiesViaEdgeBrowse({ force = false } = {}) {
     }
 
     if (!force && process.env.YTL_STRATEGY4_ENABLED === '0') {
-        console.log('[Strategy4] 🚫 Disabled by env var YTL_STRATEGY4_ENABLED=0');
+        console.log('[Strategy4] ðŸš« Disabled by env var YTL_STRATEGY4_ENABLED=0');
         return { success: false, reason: 'disabled_by_env' };
     }
 
     const elapsed = Date.now() - _strategy4LastRunAt;
     if (!force && elapsed < STRATEGY4_COOLDOWN_MS) {
         const remaining = Math.ceil((STRATEGY4_COOLDOWN_MS - elapsed) / 1000);
-        console.log(`[Strategy4] ⏭️ Cooldown active — ${remaining}s left, skipping browse step`);
+        console.log(`[Strategy4] â­ï¸ Cooldown active â€” ${remaining}s left, skipping browse step`);
         return {
             success: false,
             reason: 'cooldown',
@@ -790,25 +915,25 @@ async function refreshCookiesViaEdgeBrowse({ force = false } = {}) {
     if (process.platform === 'linux'
         && !process.env.DISPLAY
         && !process.env.WAYLAND_DISPLAY) {
-        console.log('[Strategy4] ⚠️ No DISPLAY/WAYLAND_DISPLAY — skipping on headless Linux');
+        console.log('[Strategy4] âš ï¸ No DISPLAY/WAYLAND_DISPLAY â€” skipping on headless Linux');
         return { success: false, reason: 'headless_linux' };
     }
 
     const edgePath = getEdgeBinaryPath();
     if (!edgePath) {
-        console.log('[Strategy4] ⚠️ Microsoft Edge binary not found on this system');
+        console.log('[Strategy4] âš ï¸ Microsoft Edge binary not found on this system');
         return { success: false, reason: 'edge_not_installed' };
     }
 
     const userDataDir = getEdgeUserDataDir();
     if (!fs.existsSync(userDataDir)) {
-        console.log(`[Strategy4] ⚠️ Edge user data dir not found: ${userDataDir}`);
+        console.log(`[Strategy4] âš ï¸ Edge user data dir not found: ${userDataDir}`);
         return { success: false, reason: 'edge_profile_missing' };
     }
 
     if (isEdgeRunning()) {
-        const msg = 'Microsoft Edge is already running. Close all Edge windows and retry — Strategy 4 cannot acquire the profile lock while Edge is open.';
-        console.log('[Strategy4] ⚠️ ' + msg);
+        const msg = 'Microsoft Edge is already running. Close all Edge windows and retry â€” Strategy 4 cannot acquire the profile lock while Edge is open.';
+        console.log('[Strategy4] âš ï¸ ' + msg);
         return { success: false, reason: 'edge_already_open', message: msg };
     }
 
@@ -816,12 +941,12 @@ async function refreshCookiesViaEdgeBrowse({ force = false } = {}) {
     try {
         playwright = require('playwright');
     } catch {
-        console.log('[Strategy4] ⚠️ playwright is not installed (run: npm i playwright)');
+        console.log('[Strategy4] âš ï¸ playwright is not installed (run: npm i playwright)');
         return { success: false, reason: 'playwright_not_installed' };
     }
 
     _strategy4InProgress = true;
-    console.log('[Strategy4] 🚀 Launching Edge (headed, persistent profile)...');
+    console.log('[Strategy4] ðŸš€ Launching Edge (headed, persistent profile)...');
 
     let context;
     try {
@@ -835,14 +960,14 @@ async function refreshCookiesViaEdgeBrowse({ force = false } = {}) {
         });
     } catch (err) {
         _strategy4InProgress = false;
-        console.error('[Strategy4] ❌ Edge launch failed:', err.message);
+        console.error('[Strategy4] âŒ Edge launch failed:', err.message);
         return { success: false, reason: 'launch_failed', error: err.message };
     }
 
     try {
         const page = await context.newPage();
 
-        console.log('[Strategy4] 🌐 Navigating to https://www.youtube.com');
+        console.log('[Strategy4] ðŸŒ Navigating to https://www.youtube.com');
         await page.goto('https://www.youtube.com', { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
         await page.waitForSelector('ytd-rich-item-renderer', { timeout: 15_000 });
@@ -853,44 +978,44 @@ async function refreshCookiesViaEdgeBrowse({ force = false } = {}) {
         );
 
         if (!videoHrefs.length) {
-            console.log('[Strategy4] ⚠️ No video links found on YouTube homepage');
+            console.log('[Strategy4] âš ï¸ No video links found on YouTube homepage');
             return { success: false, reason: 'no_videos_on_homepage' };
         }
 
         const randomUrl = videoHrefs[Math.floor(Math.random() * videoHrefs.length)];
-        console.log(`[Strategy4] 🎲 Random video: ${randomUrl}`);
+        console.log(`[Strategy4] ðŸŽ² Random video: ${randomUrl}`);
 
         await page.goto(randomUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
-        console.log('[Strategy4] ⏳ Waiting 8s for cookie rotation XHRs...');
+        console.log('[Strategy4] â³ Waiting 8s for cookie rotation XHRs...');
         await page.waitForTimeout(8_000);
 
-        console.log('[Strategy4] 🔒 Closing Edge (flushing cookie DB to disk)');
+        console.log('[Strategy4] ðŸ”’ Closing Edge (flushing cookie DB to disk)');
         await context.close();
         context = null;
 
         await new Promise(r => setTimeout(r, 1500));
     } catch (err) {
-        console.error('[Strategy4] ❌ Browse step failed:', err.message);
+        console.error('[Strategy4] âŒ Browse step failed:', err.message);
         try { if (context) await context.close(); } catch {}
         _strategy4InProgress = false;
         return { success: false, reason: 'browse_failed', error: err.message };
     }
 
-    console.log('[Strategy4] 🐍 Spawning extract_cookies.py to re-extract cookies.txt');
+    console.log('[Strategy4] ðŸ Spawning extract_cookies.py to re-extract cookies.txt');
     const extractResult = await autoExtractCookiesViaPython({ browser: 'edge' });
 
     _strategy4InProgress = false;
     _strategy4LastRunAt = Date.now();
 
     if (!extractResult.success) {
-        console.error('[Strategy4] ❌ Cookie extraction failed:',
+        console.error('[Strategy4] âŒ Cookie extraction failed:',
             extractResult.error || 'unknown');
         return { success: false, reason: 'extract_failed', error: extractResult.error };
     }
 
     const validNow = isCookiesFileValid(true);
-    console.log(`[Strategy4] ${validNow ? '✅' : '⚠️'} cookies.txt is ${validNow ? 'valid' : 'invalid format'} after refresh`);
+    console.log(`[Strategy4] ${validNow ? 'âœ…' : 'âš ï¸'} cookies.txt is ${validNow ? 'valid' : 'invalid format'} after refresh`);
 
     return {
         success: validNow,
@@ -901,8 +1026,8 @@ async function refreshCookiesViaEdgeBrowse({ force = false } = {}) {
 }
 
 // =============================================================================
-// ⭐ FIX #1: Correct Strategy 3 command — use --cookies-from-browser, no path
-// ⭐ FIX #2: Inject --js-runtimes node into every string-based command
+// â­ FIX #1: Correct Strategy 3 command â€” use --cookies-from-browser, no path
+// â­ FIX #2: Inject --js-runtimes node into every string-based command
 // =============================================================================
 function buildCommandsWithCookieStrategies(baseUrl, url) {
     console.log('\n[buildCommands] Building command strategies...');
@@ -910,7 +1035,7 @@ function buildCommandsWithCookieStrategies(baseUrl, url) {
 
     getNativeCookiePath();
 
-    // ⭐ FIX #2: Ensure the base command has global flags
+    // â­ FIX #2: Ensure the base command has global flags
     const baseUrlWithFlags = withGlobalFlags(baseUrl);
 
     const strategies = [];
@@ -938,7 +1063,7 @@ function buildCommandsWithCookieStrategies(baseUrl, url) {
         console.log('[commands] Strategy 2: SKIPPED (cookies.txt invalid or missing)');
     }
 
-    // ⭐ FIX #1: Strategy 3 — correct flag, NO hardcoded path
+    // â­ FIX #1: Strategy 3 â€” correct flag, NO hardcoded path
     const browser = AUTH_CONFIG.browserName || 'edge';
     const browserCmd = baseUrlWithFlags + ' --cookies /c/Program Files (x86)/multi-channel-ytl/server/cookies.txt' + browser + ' "' + url + '"';
     strategies.push({
@@ -972,16 +1097,16 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
 
     if (strategy.type === 'refresh') {
         if (strategy._consumed) {
-            console.log('[executeWithRetry] ⏭️ Strategy 4 already consumed in this chain — skipping past');
+            console.log('[executeWithRetry] â­ï¸ Strategy 4 already consumed in this chain â€” skipping past');
             executeWithRetry(strategies, currentIndex + 1, onSuccess, onError);
             return;
         }
         strategy._consumed = true;
 
-        console.log('\n[executeWithRetry] 🔄 Strategy 4: Refreshing cookies via Edge browse...');
+        console.log('\n[executeWithRetry] ðŸ”„ Strategy 4: Refreshing cookies via Edge browse...');
         refreshCookiesViaEdgeBrowse().then(result => {
             if (result.success) {
-                console.log('[executeWithRetry] ✅ Strategy 4 refresh succeeded — retrying Strategy 2 (cookies.txt)');
+                console.log('[executeWithRetry] âœ… Strategy 4 refresh succeeded â€” retrying Strategy 2 (cookies.txt)');
 
                 const baseUrl = strategy.baseUrl;
                 const url = strategy.url;
@@ -996,11 +1121,11 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
                 if (strat2Idx >= 0) {
                     executeWithRetry(freshStrategies, strat2Idx, onSuccess, onError);
                 } else {
-                    console.error('[executeWithRetry] ❌ Strategy 4 reported success but cookies.txt still invalid');
+                    console.error('[executeWithRetry] âŒ Strategy 4 reported success but cookies.txt still invalid');
                     onError(new Error('Strategy 4 succeeded but cookies.txt is still invalid'));
                 }
             } else if (result.reason === 'cooldown') {
-                console.log(`[executeWithRetry] ⏭️ Strategy 4 cooldown — retrying Strategy 2 with current cookies.txt (${result.cooldownSecondsLeft}s left in cooldown)`);
+                console.log(`[executeWithRetry] â­ï¸ Strategy 4 cooldown â€” retrying Strategy 2 with current cookies.txt (${result.cooldownSecondsLeft}s left in cooldown)`);
                 const freshStrategies = buildCommandsWithCookieStrategies(strategy.baseUrl, strategy.url);
 
                 const freshRefreshIdx = freshStrategies.findIndex(s => s.type === 'refresh');
@@ -1015,13 +1140,13 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
                     onError(new Error('Strategy 4 cooldown + cookies.txt still missing'));
                 }
             } else {
-                console.error('[executeWithRetry] ❌ Strategy 4 failed (' + result.reason + ')');
+                console.error('[executeWithRetry] âŒ Strategy 4 failed (' + result.reason + ')');
                 if (result.message) console.error('[executeWithRetry] ' + result.message);
                 if (result.error) console.error('[executeWithRetry] Detail:', result.error);
                 onError(new Error('Strategy 4 (' + result.reason + '): all cookie strategies failed'));
             }
         }).catch(err => {
-            console.error('[executeWithRetry] ❌ Strategy 4 unexpected error:', err.message);
+            console.error('[executeWithRetry] âŒ Strategy 4 unexpected error:', err.message);
             onError(err);
         });
         return;
@@ -1033,7 +1158,7 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
     const startTime = Date.now();
 
     exec(strategy.cmd, {
-        maxBuffer: 500 * 1024 * 1024,   // bumped from 50 MB — prevents
+        maxBuffer: 500 * 1024 * 1024,   // bumped from 50 MB â€” prevents
                                         // "maxBuffer length exceeded" on
                                         // large metadata/format outputs
         encoding: 'utf-8'
@@ -1041,7 +1166,7 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
         if (error) {
-            console.log('[executeWithRetry] ❌ Strategy', currentIndex + 1, 'failed in', elapsed, 's:', strategy.description);
+            console.log('[executeWithRetry] âŒ Strategy', currentIndex + 1, 'failed in', elapsed, 's:', strategy.description);
 
             const isCookieError =
                 error.message.includes('invalid Netscape format') ||
@@ -1054,7 +1179,7 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
                 stderr.includes('decrypt');
 
             if (isCookieError && currentIndex < strategies.length - 1) {
-                console.log('[executeWithRetry] 🔄 Cookie-related error detected, trying next strategy...');
+                console.log('[executeWithRetry] ðŸ”„ Cookie-related error detected, trying next strategy...');
                 if (stderr) {
                     const firstLine = stderr.split('\n').find(l => l.trim().startsWith('ERROR:'));
                     if (firstLine) console.log('[executeWithRetry] Error hint:', firstLine.trim());
@@ -1063,20 +1188,20 @@ function executeWithRetry(strategies, currentIndex, onSuccess, onError) {
                 return;
             }
 
-            console.log('[executeWithRetry] ❌ All strategies exhausted or non-recoverable error');
+            console.log('[executeWithRetry] âŒ All strategies exhausted or non-recoverable error');
             if (stderr) {
                 console.log('[executeWithRetry] Final error (first 500 chars):', stderr.substring(0, 500));
             }
             onError(error);
         } else {
-            console.log('[executeWithRetry] ✅ Strategy', currentIndex + 1, 'succeeded in', elapsed, 's:', strategy.description);
+            console.log('[executeWithRetry] âœ… Strategy', currentIndex + 1, 'succeeded in', elapsed, 's:', strategy.description);
             onSuccess(stdout);
         }
     });
 }
 
 // =============================================================================
-// ⭐ FIX #10: DOWNLOADS_DIR is MUTABLE so PUT /api/settings actually works
+// â­ FIX #10: DOWNLOADS_DIR is MUTABLE so PUT /api/settings actually works
 // =============================================================================
 const PORT = process.env.PORT || 3000;
 
@@ -1145,7 +1270,7 @@ let initialDiskSyncDone = false;
 
 const _inFlightDownloadUrls = new Set();
 
-// ⭐ FIX: _activeDownloadIds moved ABOVE any function that references it
+// â­ FIX: _activeDownloadIds moved ABOVE any function that references it
 // =============================================================================
 // Recently-downloaded channel tracker
 // =============================================================================
@@ -1198,14 +1323,14 @@ const serverLogBuffer = [];
 const MAX_SERVER_LOGS = 500;
 
 // =============================================================================
-// DETAIL LOG PATTERNS — these stay in the 1.bat terminal but are FILTERED OUT
+// DETAIL LOG PATTERNS â€” these stay in the 1.bat terminal but are FILTERED OUT
 // of the browser's Server Terminal tab (they'd be too noisy)
 // =============================================================================
 const DETAIL_LOG_PATTERNS = [
     /^\[download\]/,                             // yt-dlp progress: [download] 45.2% of ...
     /^\[Execute Download\] Cookie strategy/,     // verbose strategy logging
     /^\[Execute Download\] Command:/,
-    /^\[Execute Download\] \U0001f6e1\ufe0f/,   // 🛡️ emoji line
+    /^\[Execute Download\] \U0001f6e1\ufe0f/,   // ðŸ›¡ï¸ emoji line
     /^\[Execute Download\] Temp file/,
     /^\[Execute Download\] Format:/,
     /^\[Format Analyzer\]/,
@@ -1225,7 +1350,7 @@ const DETAIL_LOG_PATTERNS = [
     /^\[ensureUniqueOnDisk\]/,
     /^\[Database\] SQLite/,
     /^\[findIndexHtml\]/,
-    /^\[Settings\] \U0001f4c1/,                  // 📁 emoji line
+    /^\[Settings\] \U0001f4c1/,                  // ðŸ“ emoji line
     /^\[Cookie Path\]/,
     /^\[Init\] /,
     /^\[Startup\] /,
@@ -1337,7 +1462,7 @@ const downloadManager = {
 
 // =============================================================================
 // DOWNLOAD QUEUE MANAGER
-// ⭐ FIX: Moved ABOVE route handlers so it's not in the temporal dead zone.
+// â­ FIX: Moved ABOVE route handlers so it's not in the temporal dead zone.
 // =============================================================================
 
 const downloadQueue = {
@@ -1347,8 +1472,84 @@ const downloadQueue = {
     activeJobs: [],
     queue: [],
     pendingBuffer: [],
+    _pausedByNetwork: false,
+
+    pauseForNetwork() {
+        if (this._pausedByNetwork) return;
+        this._pausedByNetwork = true;
+
+        console.log('\n[Download Queue] \u23f8\ufe0f  NETWORK OFFLINE - pausing all downloads');
+
+        const killedIds = [];
+        for (const [downloadId, entry] of activeChildProcesses.entries()) {
+            try {
+                entry.proc.kill('SIGTERM');
+                killedIds.push(downloadId);
+            } catch (e) {
+                console.warn('[Download Queue] Failed to kill proc for ' + downloadId + ':', e.message);
+            }
+        }
+        activeChildProcesses.clear();
+
+        const jobsToRequeue = [];
+        for (const job of this.activeJobs) {
+            const dl = downloadManager.get(job.downloadId);
+            if (!dl) continue;
+            if (dl.status === 'downloading' || dl.status === 'queued') {
+                downloadManager.update(job.downloadId, {
+                    status: 'queued',
+                    progress: 0,
+                    networkPaused: true,
+                    networkPausedAt: new Date().toISOString()
+                });
+                jobsToRequeue.push(job);
+            }
+        }
+
+        for (let i = jobsToRequeue.length - 1; i >= 0; i--) {
+            this.queue.unshift(jobsToRequeue[i]);
+        }
+        this.activeJobs = [];
+
+        for (const job of jobsToRequeue) {
+            try {
+                const outputDir = path.dirname(job.outputPath);
+                const tempBase = 'ytl_' + job.downloadId;
+                for (const f of fs.readdirSync(outputDir)) {
+                    if (f.startsWith(tempBase)) {
+                        try {
+                            fs.unlinkSync(path.join(outputDir, f));
+                            console.log('[Download Queue] \ud83e\uddf9 Cleaned partial: ' + f);
+                        } catch {}
+                    }
+                }
+            } catch {}
+        }
+
+        console.log('[Download Queue] \ud83d\udce6 Requeued ' + jobsToRequeue.length + ' job(s). Killed ' + killedIds.length + ' process(es).');
+    },
+
+    resumeFromNetwork() {
+        if (!this._pausedByNetwork) return;
+        this._pausedByNetwork = false;
+
+        console.log('\n[Download Queue] \u25b6\ufe0f  NETWORK ONLINE - resuming downloads');
+
+        for (const dl of downloadManager.getAll()) {
+            if (dl.networkPaused) {
+                downloadManager.update(dl.id, { networkPaused: false });
+            }
+        }
+
+        this.processStuckQueue();
+    },
+
+    isPausedByNetwork() {
+        return this._pausedByNetwork;
+    },
 
     replenishQueue() {
+        if (this._pausedByNetwork) return;
         if (this.pendingBuffer.length === 0) return;
 
         const currentVisible = this.activeJobs.length + this.queue.length;
@@ -1357,7 +1558,7 @@ const downloadQueue = {
             if (needed <= 0) return;
 
             const toMove = this.pendingBuffer.splice(0, needed);
-            console.log(`[Download Queue] 🔄 Queue reached ${currentVisible} (<= ${this.replenishThreshold}). Replenishing ${toMove.length} videos from pending pool.`);
+            console.log(`[Download Queue] ðŸ”„ Queue reached ${currentVisible} (<= ${this.replenishThreshold}). Replenishing ${toMove.length} videos from pending pool.`);
 
             toMove.forEach(job => {
                 this.queue.push(job);
@@ -1369,18 +1570,18 @@ const downloadQueue = {
     enqueue(downloadId, videoUrl, outputPath, videoTitle) {
         const job = { downloadId, videoUrl, outputPath, videoTitle, startedAt: null };
 
-        console.log(`\n[Download Queue] 📥 Job added: ${videoTitle?.substring(0, 30)}...`);
+        console.log(`\n[Download Queue] ðŸ“¥ Job added: ${videoTitle?.substring(0, 30)}...`);
 
         if (this.activeJobs.length < this.maxConcurrent) {
-            console.log(`[Download Queue] ▶️ Starting immediately (slot ${this.activeJobs.length + 1}/${this.maxConcurrent})`);
+            console.log(`[Download Queue] â–¶ï¸ Starting immediately (slot ${this.activeJobs.length + 1}/${this.maxConcurrent})`);
             this.executeJob(job);
         } else if (this.activeJobs.length + this.queue.length < this.maxVisibleQueue) {
             this.queue.push(job);
-            console.log(`[Download Queue] ⏳ Queued at visible position #${this.queue.length}`);
+            console.log(`[Download Queue] â³ Queued at visible position #${this.queue.length}`);
             downloadManager.update(downloadId, { status: 'queued' });
         } else {
             this.pendingBuffer.push(job);
-            console.log(`[Download Queue] 💾 Buffered (total buffered: ${this.pendingBuffer.length})`);
+            console.log(`[Download Queue] ðŸ’¾ Buffered (total buffered: ${this.pendingBuffer.length})`);
             downloadManager.update(downloadId, { status: 'queued' });
         }
     },
@@ -1390,7 +1591,7 @@ const downloadQueue = {
 
         const alreadyActive = this.activeJobs.find(j => j.downloadId === downloadId);
         if (alreadyActive) {
-            console.log(`[Download Queue] ⚠️ DUPLICATE EXECUTION BLOCKED: ${videoTitle?.substring(0, 30)}...`);
+            console.log(`[Download Queue] âš ï¸ DUPLICATE EXECUTION BLOCKED: ${videoTitle?.substring(0, 30)}...`);
             return;
         }
 
@@ -1399,12 +1600,12 @@ const downloadQueue = {
 
         downloadManager.update(downloadId, { status: 'downloading', startTime: Date.now() });
 
-        console.log(`[Download Queue] ▶️ Job STARTED: ${videoTitle?.substring(0, 30)}...`);
+        console.log(`[Download Queue] â–¶ï¸ Job STARTED: ${videoTitle?.substring(0, 30)}...`);
         console.log(`[Download Queue] Active jobs: ${this.activeJobs.length} | Visible queue: ${this.queue.length} | Buffered: ${this.pendingBuffer.length}`);
 
         executeSmartDownload(downloadId, videoUrl, outputPath, videoTitle)
             .then(() => {
-                console.log(`[Download Queue] ✅ Job completed: ${videoTitle?.substring(0, 30)}...`);
+                console.log(`[Download Queue] âœ… Job completed: ${videoTitle?.substring(0, 30)}...`);
                 _inFlightDownloadUrls.delete(videoUrl);
 
                 const _dlJustFinished = downloadManager.get(downloadId);
@@ -1413,7 +1614,7 @@ const downloadQueue = {
                 }
             })
             .catch((err) => {
-                console.error(`[Download Queue] ❌ Job failed: ${videoTitle?.substring(0, 30)}... -`, err?.message);
+                console.error(`[Download Queue] âŒ Job failed: ${videoTitle?.substring(0, 30)}... -`, err?.message);
                 _inFlightDownloadUrls.delete(videoUrl);
 
                 try {
@@ -1424,11 +1625,11 @@ const downloadQueue = {
                     [tempFile, partialFile, outputPath].forEach(file => {
                         if (fs.existsSync(file)) {
                             fs.unlinkSync(file);
-                            console.log(`[Download Queue] 🧹 Cleaned up failed file: ${path.basename(file)}`);
+                            console.log(`[Download Queue] ðŸ§¹ Cleaned up failed file: ${path.basename(file)}`);
                         }
                     });
                 } catch (cleanupErr) {
-                    console.warn(`[Download Queue] ⚠️ Cleanup failed:`, cleanupErr.message);
+                    console.warn(`[Download Queue] âš ï¸ Cleanup failed:`, cleanupErr.message);
                 }
             })
             .finally(() => {
@@ -1441,7 +1642,7 @@ const downloadQueue = {
             const idx = this.activeJobs.findIndex(j => j.downloadId === completedJob.downloadId);
             if (idx !== -1) {
                 this.activeJobs.splice(idx, 1);
-                console.log(`[Download Queue] 🔓 Removed from active: ${completedJob.videoTitle?.substring(0, 30)}...`);
+                console.log(`[Download Queue] ðŸ”“ Removed from active: ${completedJob.videoTitle?.substring(0, 30)}...`);
 
                 const _dlCompleted = downloadManager.get(completedJob.downloadId);
                 if (_dlCompleted && _dlCompleted.channelId) {
@@ -1449,43 +1650,47 @@ const downloadQueue = {
                     console.log(`[Download Queue] Marked channel ${_dlCompleted.channelId} as recently-downloaded`);
                 }
             } else {
-                console.log(`[Download Queue] ⚠️ Job already removed from active`);
+                console.log(`[Download Queue] âš ï¸ Job already removed from active`);
                 return;
             }
         }
 
         this.replenishQueue();
 
-        console.log(`\n[Download Queue] 📊 Status: Active=${this.activeJobs.length}/${this.maxConcurrent} | Visible Queue=${this.queue.length} | Buffered=${this.pendingBuffer.length}`);
+        console.log(`\n[Download Queue] ðŸ“Š Status: Active=${this.activeJobs.length}/${this.maxConcurrent} | Visible Queue=${this.queue.length} | Buffered=${this.pendingBuffer.length}`);
 
         if (this.queue.length > 0 && this.activeJobs.length < this.maxConcurrent) {
-            // ⭐ PATCH: jittered 15–30s delay (was fixed 5s) to avoid 403 storms
+            // â­ PATCH: jittered 15â€“30s delay (was fixed 5s) to avoid 403 storms
             const _delayMs = 15000 + Math.floor(Math.random() * 15000);
-            console.log(`[Download Queue] ⏳ Waiting ${Math.round(_delayMs / 1000)}s before starting next download...`);
+            console.log(`[Download Queue] â³ Waiting ${Math.round(_delayMs / 1000)}s before starting next download...`);
             setTimeout(() => {
+                if (this._pausedByNetwork) {
+                    console.log('[Download Queue] \u23f8\ufe0f Skipping scheduled start - network paused');
+                    return;
+                }
                 if (this.queue.length === 0 || this.activeJobs.length >= this.maxConcurrent) return;
 
                 const nextJob = this.queue.shift();
 
                 if (!nextJob) {
-                    console.log('[Download Queue] ⚠️ Next job is null, skipping');
+                    console.log('[Download Queue] âš ï¸ Next job is null, skipping');
                     return;
                 }
 
                 const alreadyRunning = this.activeJobs.find(j => j.downloadId === nextJob.downloadId);
                 if (alreadyRunning) {
-                    console.log(`[Download Queue] ⚠️ Next job already running, skipping`);
+                    console.log(`[Download Queue] âš ï¸ Next job already running, skipping`);
                     return;
                 }
 
-                console.log(`[Download Queue] ▶️ Reserved slot and starting next in queue: ${nextJob.videoTitle?.substring(0, 30)}...`);
+                console.log(`[Download Queue] â–¶ï¸ Reserved slot and starting next in queue: ${nextJob.videoTitle?.substring(0, 30)}...`);
                 console.log(`[Download Queue] Remaining in queue: ${this.queue.length} (buffered: ${this.pendingBuffer.length})`);
 
                 this.executeJob(nextJob);
             }, _delayMs);
 
         } else if (this.queue.length === 0 && this.pendingBuffer.length === 0 && this.activeJobs.length === 0) {
-            console.log('[Download Queue] 🎉 All downloads complete! Queue empty.');
+            console.log('[Download Queue] ðŸŽ‰ All downloads complete! Queue empty.');
         }
     },
 
@@ -1531,7 +1736,7 @@ const downloadQueue = {
 
         this.queue = [];
         this.pendingBuffer = [];
-        console.log(`[Download Queue] 🗑️ Queue cleared (${clearedVisible + clearedPending} jobs removed)`);
+        console.log(`[Download Queue] ðŸ—‘ï¸ Queue cleared (${clearedVisible + clearedPending} jobs removed)`);
         return clearedVisible + clearedPending;
     },
 
@@ -1545,7 +1750,7 @@ const downloadQueue = {
         const removed = (initQ !== this.queue.length) || (initP !== this.pendingBuffer.length);
 
         if (removed) {
-            console.log(`[Download Queue] 🗑️ Removed job ${downloadId} from queue/buffer`);
+            console.log(`[Download Queue] ðŸ—‘ï¸ Removed job ${downloadId} from queue/buffer`);
             this.replenishQueue();
         }
 
@@ -1553,12 +1758,16 @@ const downloadQueue = {
     },
 
     processStuckQueue() {
+        if (this._pausedByNetwork) {
+            console.log('[Download Queue] \u23f8\ufe0f processStuckQueue skipped - network paused');
+            return;
+        }
         this.replenishQueue();
         if (this.activeJobs.length < this.maxConcurrent && this.queue.length > 0) {
-            console.log('[Download Queue] 🔄 Safety check: Found stuck jobs, processing...');
+            console.log('[Download Queue] ðŸ”„ Safety check: Found stuck jobs, processing...');
             while (this.activeJobs.length < this.maxConcurrent && this.queue.length > 0) {
                 const nextJob = this.queue.shift();
-                console.log(`[Download Queue] ▶️ Safety-starting: ${nextJob.videoTitle?.substring(0, 30)}...`);
+                console.log(`[Download Queue] â–¶ï¸ Safety-starting: ${nextJob.videoTitle?.substring(0, 30)}...`);
                 this.executeJob(nextJob);
             }
         }
@@ -1574,7 +1783,7 @@ function fallbackSanitize(filename) {
 
     let sanitized = filename;
 
-    // ⭐ FIX: strip control characters (newlines, tabs, etc.) — illegal on Windows
+    // â­ FIX: strip control characters (newlines, tabs, etc.) â€” illegal on Windows
     sanitized = sanitized.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ');
 
     // Collapse runs of whitespace into single spaces
@@ -1606,7 +1815,7 @@ function sanitizeViaPython(rawTitle) {
 }
 
 /**
- * ⭐ FIX: Detect temp-name leaks like
+ * â­ FIX: Detect temp-name leaks like
  * "ytl_a5e425a1-a924-43ca-a5ec-a003b21e541d_25-03-03--lRcDMCfFtzU.mp4"
  * and force a rename using the original title. Prevents the rename-skip path
  * in renameDownloadedFile() from ever leaving a ytl_<uuid> file on disk.
@@ -1624,11 +1833,11 @@ function recoverFromTempNameLeak(filePath, downloadObj, outputDir) {
         : null;
 
     if (!rawTitle) {
-        console.warn(`[TempLeak] ⚠️ Detected temp name "${currentName}" but no title available to recover from`);
+        console.warn(`[TempLeak] âš ï¸ Detected temp name "${currentName}" but no title available to recover from`);
         return { path: filePath, filename: currentName, recovered: false };
     }
 
-    console.warn(`[TempLeak] ⚠️ Detected temp-name leak: "${currentName}" — forcing rename from title`);
+    console.warn(`[TempLeak] âš ï¸ Detected temp-name leak: "${currentName}" â€” forcing rename from title`);
 
     let baseName = sanitizeViaPython(rawTitle);
     if (!baseName || baseName === 'unnamed') {
@@ -1649,10 +1858,10 @@ function recoverFromTempNameLeak(filePath, downloadObj, outputDir) {
 
     try {
         fs.renameSync(filePath, safePath);
-        console.log(`[TempLeak] ✅ Recovered: "${currentName}" → "${safeName}"`);
+        console.log(`[TempLeak] âœ… Recovered: "${currentName}" â†’ "${safeName}"`);
         return { path: safePath, filename: safeName, recovered: true };
     } catch (err) {
-        console.error(`[TempLeak] ❌ Recovery rename failed:`, err.message);
+        console.error(`[TempLeak] âŒ Recovery rename failed:`, err.message);
         return { path: filePath, filename: currentName, recovered: false };
     }
 }
@@ -1715,7 +1924,7 @@ function applyDateStampToFilename(filename, yyyymmdd, maxBaseLen, videoId) {
 function getVideoUploadDateFromYouTube(videoId) {
     return new Promise((resolve) => {
         if (!videoId || !/^[a-zA-Z0-9_-]{6,}$/.test(videoId)) {
-            console.warn(`[UploadDate] ⚠️ Invalid videoId: ${videoId}`);
+            console.warn(`[UploadDate] âš ï¸ Invalid videoId: ${videoId}`);
             resolve(null);
             return;
         }
@@ -1734,19 +1943,19 @@ function getVideoUploadDateFromYouTube(videoId) {
                     const info = JSON.parse(trimmed);
                     const uploadDate = info.upload_date || null;
                     if (uploadDate && /^\d{8}$/.test(uploadDate)) {
-                        console.log(`[UploadDate] ✅ ${videoId} → upload_date=${uploadDate}`);
+                        console.log(`[UploadDate] âœ… ${videoId} â†’ upload_date=${uploadDate}`);
                         resolve(uploadDate);
                     } else {
-                        console.warn(`[UploadDate] ⚠️ ${videoId} no upload_date in metadata`);
+                        console.warn(`[UploadDate] âš ï¸ ${videoId} no upload_date in metadata`);
                         resolve(null);
                     }
                 } catch (err) {
-                    console.error(`[UploadDate] ❌ parse error for ${videoId}:`, err.message);
+                    console.error(`[UploadDate] âŒ parse error for ${videoId}:`, err.message);
                     resolve(null);
                 }
             },
             (error) => {
-                console.error(`[UploadDate] ❌ All strategies failed for ${videoId}:`, error.message);
+                console.error(`[UploadDate] âŒ All strategies failed for ${videoId}:`, error.message);
                 resolve(null);
             }
         );
@@ -1798,12 +2007,12 @@ function getVideoUploadDatesBatch(videoIds, onResult) {
         try {
             fs.writeFileSync(tmpFile, urls.join('\n') + '\n', 'utf8');
         } catch (err) {
-            console.error('[BatchUploadDate] ❌ Failed to write temp file:', err.message);
+            console.error('[BatchUploadDate] âŒ Failed to write temp file:', err.message);
             resolve({ results: new Map(), failed: videoIds.slice() });
             return;
         }
 
-        console.log(`[BatchUploadDate] 📦 Batch of ${videoIds.length} videos → ${tmpFile}`);
+        console.log(`[BatchUploadDate] ðŸ“¦ Batch of ${videoIds.length} videos â†’ ${tmpFile}`);
 
         const results = new Map();
         const seenVideoIds = new Set(videoIds);
@@ -1827,7 +2036,7 @@ function getVideoUploadDatesBatch(videoIds, onResult) {
         const tryNextStrategy = () => {
             if (strategyIdx >= strategies.length) {
                 const failed = Array.from(seenVideoIds).filter(id => !results.has(id));
-                console.error(`[BatchUploadDate] ❌ All ${strategies.length} strategies failed. ${failed.length}/${videoIds.length} videos not resolved.`);
+                console.error(`[BatchUploadDate] âŒ All ${strategies.length} strategies failed. ${failed.length}/${videoIds.length} videos not resolved.`);
                 cleanup();
                 resolve({ results, failed });
                 return;
@@ -1866,7 +2075,7 @@ function getVideoUploadDatesBatch(videoIds, onResult) {
                             catch (e) { console.warn('[BatchUploadDate] onResult error:', e.message); }
                         }
                     }
-                } catch (parseErr) { /* not JSON — skip */ }
+                } catch (parseErr) { /* not JSON â€” skip */ }
             };
 
             proc.stdout.on('data', (data) => {
@@ -1952,7 +2161,7 @@ async function getVideoUploadDatesParallel(videoIds, concurrency = 4, onResult, 
 
     for (let round = 0; round <= MAX_RETRIES && remaining.length > 0; round++) {
         if (round > 0) {
-            console.log(`[ParallelBatch] 🔄 Retry round ${round}: ${remaining.length} videos to re-fetch`);
+            console.log(`[ParallelBatch] ðŸ”„ Retry round ${round}: ${remaining.length} videos to re-fetch`);
             if (onRetry) {
                 try { onRetry(round, remaining.length); } catch (e) {}
             }
@@ -1974,7 +2183,7 @@ async function getVideoUploadDatesParallel(videoIds, concurrency = 4, onResult, 
             chunks.push(remaining.slice(i, i + chunkSize));
         }
 
-        console.log(`[ParallelBatch] 📦 Round ${round}: ${remaining.length} videos → ${chunks.length} batches of ~${chunkSize} (concurrency=${batchConcurrency})`);
+        console.log(`[ParallelBatch] ðŸ“¦ Round ${round}: ${remaining.length} videos â†’ ${chunks.length} batches of ~${chunkSize} (concurrency=${batchConcurrency})`);
 
         const roundResults = new Map();
         const roundFailed = [];
@@ -2003,13 +2212,13 @@ async function getVideoUploadDatesParallel(videoIds, concurrency = 4, onResult, 
 
         remaining = roundFailed;
 
-        console.log(`[ParallelBatch] ✅ Round ${round} done: +${roundResults.size} fetched, ${roundFailed.length} still failing (total: ${allResults.size}/${videoIds.length})`);
+        console.log(`[ParallelBatch] âœ… Round ${round} done: +${roundResults.size} fetched, ${roundFailed.length} still failing (total: ${allResults.size}/${videoIds.length})`);
 
         if (round > 0 && roundResults.size === 0) {
             zeroProgressRounds++;
-            console.log(`[ParallelBatch] ⚠️ Zero progress round ${zeroProgressRounds}/3 (round ${round})`);
+            console.log(`[ParallelBatch] âš ï¸ Zero progress round ${zeroProgressRounds}/3 (round ${round})`);
             if (zeroProgressRounds >= 3) {
-                console.log(`[ParallelBatch] ⛔ 3 consecutive zero-progress rounds — stopping`);
+                console.log(`[ParallelBatch] â›” 3 consecutive zero-progress rounds â€” stopping`);
                 break;
             }
             await new Promise(r => setTimeout(r, 30000));
@@ -2022,7 +2231,7 @@ async function getVideoUploadDatesParallel(videoIds, concurrency = 4, onResult, 
         allFailed.push(vidId);
     }
 
-    console.log(`[ParallelBatch] ✅ All rounds done: ${allResults.size}/${videoIds.length} dates fetched, ${allFailed.length} failed`);
+    console.log(`[ParallelBatch] âœ… All rounds done: ${allResults.size}/${videoIds.length} dates fetched, ${allFailed.length} failed`);
 
     return { results: allResults, failed: allFailed };
 }
@@ -2121,7 +2330,7 @@ function resolveDuplicatesWithDuration(videos) {
     });
 
     const modifiedCount = videos.filter(v => v.isDuplicate).length;
-    console.log(`[resolveDuplicatesWithDuration] ✅ Processing complete: ${modifiedCount} video(s) are duplicates\n`);
+    console.log(`[resolveDuplicatesWithDuration] âœ… Processing complete: ${modifiedCount} video(s) are duplicates\n`);
 
     return videos;
 }
@@ -2134,7 +2343,7 @@ function ensureUniqueOnDisk(directory, desiredFilename) {
     let counter = 2;
 
     while (fs.existsSync(path.join(directory, finalFilename))) {
-        console.log(`[ensureUniqueOnDisk] ⚠️ CONFLICT: "${finalFilename}" exists — trying "${baseName} (${counter})${ext}"`);
+        console.log(`[ensureUniqueOnDisk] âš ï¸ CONFLICT: "${finalFilename}" exists â€” trying "${baseName} (${counter})${ext}"`);
         finalFilename = `${baseName} (${counter})${ext}`;
         counter++;
 
@@ -2241,7 +2450,7 @@ app.post('/api/login', loginLimiter, (req, res) => {
         req.session.loginTime = new Date().toISOString();
         req.session.loginIP = req.ip;
 
-        console.log(`[Auth] ✅ Successful login for user: '${username}'`);
+        console.log(`[Auth] âœ… Successful login for user: '${username}'`);
 
         return res.json({
             success: true,
@@ -2251,7 +2460,7 @@ app.post('/api/login', loginLimiter, (req, res) => {
         });
     }
 
-    console.warn(`[Auth] ❌ Failed login attempt for user: '${username}' from IP: ${req.ip}`);
+    console.warn(`[Auth] âŒ Failed login attempt for user: '${username}' from IP: ${req.ip}`);
 
     return res.status(401).json({
         success: false,
@@ -2345,7 +2554,7 @@ app.get('/', (req, res) => {
         if (!found) {
             res.status(404).send(`
                 <html><body>
-                    <h1>⚠️ Frontend Not Found</h1>
+                    <h1>âš ï¸ Frontend Not Found</h1>
                     <p>Could not locate index.html</p>
                     <p>Searched in:</p>
                     <ul>${searchPaths.map(p => `<li>${p}</li>`).join('')}</ul>
@@ -2457,24 +2666,24 @@ app.put('/api/settings', async (req, res) => {
     const newPath = toNativePath(downloadsDir);
     const oldPath = DOWNLOADS_DIR;
 
-    console.log('\n[Settings] 📁 Updating download folder:');
+    console.log('\n[Settings] ðŸ“ Updating download folder:');
     console.log('   FROM:', oldPath);
     console.log('   TO:  ', newPath);
 
     try {
         if (!fs.existsSync(newPath)) {
             fs.mkdirSync(newPath, { recursive: true });
-            console.log('[Settings] ✅ Created new directory:', newPath);
+            console.log('[Settings] âœ… Created new directory:', newPath);
         }
 
         DOWNLOADS_DIR = newPath;
         process.env.DOWNLOADS_DIR = newPath;
 
-        console.log('[Settings] ✅ Download folder updated! New downloads will use:', DOWNLOADS_DIR);
+        console.log('[Settings] âœ… Download folder updated! New downloads will use:', DOWNLOADS_DIR);
 
         res.json({
             success: true,
-            message: `✅ Download folder updated to: ${newPath}`,
+            message: `âœ… Download folder updated to: ${newPath}`,
             data: {
                 newDir: newPath,
                 oldDir: oldPath,
@@ -2484,7 +2693,7 @@ app.put('/api/settings', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('[Settings] ❌ Error updating folder:', error.message);
+        console.error('[Settings] âŒ Error updating folder:', error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -2534,7 +2743,7 @@ app.post('/api/cookies/repair', (req, res) => {
     const result = repairCookiesFile(AUTH_CONFIG.cookieFilePath);
 
     if (result.repaired) {
-        console.log(`[Repair Cookies] ✅ Repaired ${result.fixedCount} line(s)`);
+        console.log(`[Repair Cookies] âœ… Repaired ${result.fixedCount} line(s)`);
         res.json({
             success: true,
             repaired: true,
@@ -2546,7 +2755,7 @@ app.post('/api/cookies/repair', (req, res) => {
             message: `Repaired ${result.fixedCount} cookie line(s). Backup saved.`
         });
     } else {
-        console.log(`[Repair Cookies] ℹ️ No repair needed (or failed): ${result.reason}`);
+        console.log(`[Repair Cookies] â„¹ï¸ No repair needed (or failed): ${result.reason}`);
         res.json({
             success: true,
             repaired: false,
@@ -2593,7 +2802,7 @@ app.get('/api/cookies/validate', (req, res) => {
         modified: stats ? stats.mtime : null,
         message: isValid
             ? 'cookies.txt is valid Netscape format'
-            : 'cookies.txt has format issues — POST /api/cookies/repair to fix'
+            : 'cookies.txt has format issues â€” POST /api/cookies/repair to fix'
     });
 });
 
@@ -2609,7 +2818,7 @@ app.post('/api/cookies/extract', async (req, res) => {
             const refreshResult = await refreshCookiesViaEdgeBrowse({ force: true });
             if (refreshResult.success) {
                 const isValid = isCookiesFileValid(false);
-                console.log(`[Extract Cookies] ✅ Strategy 4 manual browse succeeded — cookies.txt is ${isValid ? 'valid' : 'invalid'}`);
+                console.log(`[Extract Cookies] âœ… Strategy 4 manual browse succeeded â€” cookies.txt is ${isValid ? 'valid' : 'invalid'}`);
                 return res.json({
                     success: true,
                     extracted: true,
@@ -2620,7 +2829,7 @@ app.post('/api/cookies/extract', async (req, res) => {
                     message: `Strategy 4 manual refresh succeeded. cookies.txt is ${isValid ? 'valid' : 'invalid format'}.`
                 });
             } else {
-                console.log(`[Extract Cookies] ❌ Strategy 4 manual browse failed: ${refreshResult.reason}`);
+                console.log(`[Extract Cookies] âŒ Strategy 4 manual browse failed: ${refreshResult.reason}`);
                 return res.json({
                     success: false,
                     extracted: false,
@@ -2631,7 +2840,7 @@ app.post('/api/cookies/extract', async (req, res) => {
                 });
             }
         } catch (err) {
-            console.error('[Extract Cookies] ❌ Strategy 4 unexpected error:', err.message);
+            console.error('[Extract Cookies] âŒ Strategy 4 unexpected error:', err.message);
             return res.status(500).json({
                 success: false,
                 error: 'Strategy 4 unexpected error: ' + err.message
@@ -2644,7 +2853,7 @@ app.post('/api/cookies/extract', async (req, res) => {
 
         if (result.success) {
             const isValid = isCookiesFileValid(false);
-            console.log(`[Extract Cookies] ✅ Extraction succeeded — cookies.txt is ${isValid ? 'valid' : 'invalid'}`);
+            console.log(`[Extract Cookies] âœ… Extraction succeeded â€” cookies.txt is ${isValid ? 'valid' : 'invalid'}`);
             res.json({
                 success: true,
                 extracted: true,
@@ -2654,7 +2863,7 @@ app.post('/api/cookies/extract', async (req, res) => {
                 message: `Successfully extracted ${result.sizeBytes} bytes of cookies from browser. File is ${isValid ? 'valid' : 'invalid format'}.`
             });
         } else {
-            console.log(`[Extract Cookies] ❌ Extraction failed: ${result.error}`);
+            console.log(`[Extract Cookies] âŒ Extraction failed: ${result.error}`);
             res.json({
                 success: false,
                 extracted: false,
@@ -2666,7 +2875,7 @@ app.post('/api/cookies/extract', async (req, res) => {
             });
         }
     } catch (err) {
-        console.error('[Extract Cookies] ❌ Unexpected error:', err.message);
+        console.error('[Extract Cookies] âŒ Unexpected error:', err.message);
         res.status(500).json({
             success: false,
             error: 'Unexpected error: ' + err.message
@@ -2693,7 +2902,7 @@ function fetchChannelInfo(channelId, channelUrl) {
             strategies,
             0,
             (stdout) => {
-                console.log('[fetchChannelInfo] ✅ Successfully fetched channel data');
+                console.log('[fetchChannelInfo] âœ… Successfully fetched channel data');
 
                 try {
                     const lines = stdout.trim().split('\n').filter(line => line.trim());
@@ -2737,7 +2946,7 @@ function fetchChannelInfo(channelId, channelUrl) {
                         }
                     });
 
-                    console.log(`[fetchChannelInfo] ✅ Parsed ${videos.length} unique videos (from ${lines.length} raw lines)`);
+                    console.log(`[fetchChannelInfo] âœ… Parsed ${videos.length} unique videos (from ${lines.length} raw lines)`);
 
                     const processedVideos = resolveDuplicatesWithDuration(videos);
 
@@ -2851,7 +3060,7 @@ app.post('/api/download/start', async (req, res) => {
 
 app.post('/api/download', async (req, res) => {
     console.log('\n' + '='.repeat(80));
-    console.log('⬇️ [Download] POST /api/download - Frontend Download Request');
+    console.log('â¬‡ï¸ [Download] POST /api/download - Frontend Download Request');
     console.log('='.repeat(80));
     console.log('[Download] Request body:', JSON.stringify(req.body, null, 2));
 
@@ -2872,7 +3081,7 @@ app.post('/api/download', async (req, res) => {
         const videoUrl = url || (videoId ? `https://www.youtube.com/watch?v=${videoId}` : null);
 
         if (!videoUrl) {
-            console.log('[Download] ❌ ERROR: No URL or videoId provided!');
+            console.log('[Download] âŒ ERROR: No URL or videoId provided!');
             return res.status(400).json({
                 success: false,
                 error: 'Video URL or videoId required'
@@ -2880,7 +3089,7 @@ app.post('/api/download', async (req, res) => {
         }
 
         if (_inFlightDownloadUrls.has(videoUrl)) {
-            console.log(`[Download] ⚠️ DUPLICATE DETECTED (in-flight): URL already being processed`);
+            console.log(`[Download] âš ï¸ DUPLICATE DETECTED (in-flight): URL already being processed`);
             return res.status(409).json({
                 success: false,
                 error: 'Duplicate download',
@@ -2893,7 +3102,7 @@ app.post('/api/download', async (req, res) => {
             d.url === videoUrl && (d.status === 'queued' || d.status === 'downloading')
         );
         if (existingDownload) {
-            console.log(`[Download] ⚠️ DUPLICATE DETECTED: URL already downloading (ID: ${existingDownload.id})`);
+            console.log(`[Download] âš ï¸ DUPLICATE DETECTED: URL already downloading (ID: ${existingDownload.id})`);
             return res.status(409).json({
                 success: false,
                 error: 'Duplicate download',
@@ -2906,7 +3115,7 @@ app.post('/api/download', async (req, res) => {
         _inFlightDownloadUrls.add(videoUrl);
         setTimeout(() => {
             if (_inFlightDownloadUrls.has(videoUrl)) {
-                console.warn(`[Download] ⚠️ In-flight URL cleanup triggered for: ${videoUrl}`);
+                console.warn(`[Download] âš ï¸ In-flight URL cleanup triggered for: ${videoUrl}`);
                 _inFlightDownloadUrls.delete(videoUrl);
             }
         }, 5 * 60 * 1000);
@@ -2942,18 +3151,18 @@ app.post('/api/download', async (req, res) => {
             filenameSource = 'generic fallback';
         }
 
-        console.log(`[Download] 📌 Filename source: ${filenameSource}`);
-        console.log(`[Download] 📌 Filename BEFORE ensureUniqueOnDisk: "${outputFilename}"`);
+        console.log(`[Download] ðŸ“Œ Filename source: ${filenameSource}`);
+        console.log(`[Download] ðŸ“Œ Filename BEFORE ensureUniqueOnDisk: "${outputFilename}"`);
 
         const filenameBeforeUniqueness = outputFilename;
         outputFilename = ensureUniqueOnDisk(outputDir, outputFilename);
 
         if (outputFilename !== filenameBeforeUniqueness) {
-            console.log(`[Download] ⚠️ ensureUniqueOnDisk MODIFIED filename!`);
+            console.log(`[Download] âš ï¸ ensureUniqueOnDisk MODIFIED filename!`);
             console.log(`[Download]    Before: "${filenameBeforeUniqueness}"`);
             console.log(`[Download]    After:  "${outputFilename}"`);
         } else {
-            console.log(`[Download] ✅ ensureUniqueOnDisk: No change needed`);
+            console.log(`[Download] âœ… ensureUniqueOnDisk: No change needed`);
         }
 
         const outputPath = path.join(outputDir, outputFilename);
@@ -2978,11 +3187,11 @@ app.post('/api/download', async (req, res) => {
             hasFinalFilename: !!(finalFilename && finalFilename.trim())
         });
 
-        console.log('[Download] ✅ Job created, adding to DOWNLOAD QUEUE...');
+        console.log('[Download] âœ… Job created, adding to DOWNLOAD QUEUE...');
 
         downloadQueue.enqueue(downloadId, videoUrl, outputPath, title || videoId);
 
-        console.log('[Download] 📤 Response sent to frontend (job queued/starting)');
+        console.log('[Download] ðŸ“¤ Response sent to frontend (job queued/starting)');
         console.log('='.repeat(80) + '\n');
 
         res.status(201).json({
@@ -3006,7 +3215,7 @@ app.post('/api/download', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('[Download] ❌ ERROR creating download job:', error.message);
+        console.error('[Download] âŒ ERROR creating download job:', error.message);
         console.log('='.repeat(80) + '\n');
 
         res.status(500).json({
@@ -3351,7 +3560,7 @@ app.get('/api/channels/:id/videos', (req, res) => {
 
 app.post('/api/channels', async (req, res) => {
     console.log('\n' + '='.repeat(80));
-    console.log('🎬 [Channels] POST /api/channels - ADD NEW CHANNEL');
+    console.log('ðŸŽ¬ [Channels] POST /api/channels - ADD NEW CHANNEL');
     console.log('='.repeat(80));
     console.log('[Channels] Request body:', JSON.stringify(req.body, null, 2));
 
@@ -3359,7 +3568,7 @@ app.post('/api/channels', async (req, res) => {
         const { url, channelId, name } = req.body;
 
         if (!url && !channelId) {
-            console.log('[Channels] ❌ ERROR: No URL or channelId provided!');
+            console.log('[Channels] âŒ ERROR: No URL or channelId provided!');
             return res.status(400).json({ success: false, error: 'Channel URL or ID required' });
         }
 
@@ -3373,7 +3582,7 @@ app.post('/api/channels', async (req, res) => {
             while (channelUrl.includes('youtube.com/youtube.com/') ||
                    channelUrl.includes('youtube.com/www.youtube.com/')) {
                 channelUrl = channelUrl.replace(/youtube\.com\/(www\.)?youtube\.com\//, 'youtube.com/');
-                console.log('[Channels] 🔧 Fixed doubled URL');
+                console.log('[Channels] ðŸ”§ Fixed doubled URL');
             }
 
             if (!channelUrl.startsWith('http://') && !channelUrl.startsWith('https://')) {
@@ -3382,7 +3591,7 @@ app.post('/api/channels', async (req, res) => {
                 } else {
                     channelUrl = 'https://www.youtube.com/' + channelUrl;
                 }
-                console.log('[Channels] 🔧 Added missing protocol');
+                console.log('[Channels] ðŸ”§ Added missing protocol');
             }
 
             channelUrl = channelUrl.replace(/([^:])\/{2,}/g, '$1/');
@@ -3395,11 +3604,11 @@ app.post('/api/channels', async (req, res) => {
         console.log('   - ID:', channelIdFinal);
         console.log('   - Name:', name || 'Auto-detected');
 
-        console.log('\n[Channels] 📡 Fetching channel info from YouTube...');
+        console.log('\n[Channels] ðŸ“¡ Fetching channel info from YouTube...');
 
         const channelData = await fetchChannelInfo(channelIdFinal, channelUrl);
 
-        console.log('\n[Channels] ✅ Channel fetched successfully!');
+        console.log('\n[Channels] âœ… Channel fetched successfully!');
         console.log('[Channels] Videos found:', channelData.videos.length);
         console.log('[Channels] Live videos found:', channelData.liveVideos.length);
 
@@ -3429,7 +3638,7 @@ app.post('/api/channels', async (req, res) => {
         savedChannels.set(channel.id, channel);
         saveDatabase();
 
-        console.log('[Channels] 💾 Channel saved with ID:', channel.id);
+        console.log('[Channels] ðŸ’¾ Channel saved with ID:', channel.id);
         console.log('='.repeat(80) + '\n');
 
         res.status(201).json({
@@ -3444,7 +3653,7 @@ app.post('/api/channels', async (req, res) => {
 
     } catch (error) {
         console.log('\n' + '='.repeat(80));
-        console.log('❌ [Channels] FAILED TO ADD CHANNEL!');
+        console.log('âŒ [Channels] FAILED TO ADD CHANNEL!');
         console.log('='.repeat(80));
         console.log('[Channels] Error Type:', error.constructor.name);
         console.log('[Channels] Error Message:', error.message);
@@ -3586,7 +3795,7 @@ function performDiskScanForChannel(channel) {
     const unconsumedFiles = downloadedFiles.filter(f => !consumedFiles.has(f.path));
 
     if (unmatchedVideos.length > 0 && unconsumedFiles.length > 0) {
-        console.log(`[Disk Scan] 🔄 Reverse match: ${unmatchedVideos.length} unmatched videos, ${unconsumedFiles.length} unconsumed files`);
+        console.log(`[Disk Scan] ðŸ”„ Reverse match: ${unmatchedVideos.length} unmatched videos, ${unconsumedFiles.length} unconsumed files`);
 
         for (const diskFile of unconsumedFiles) {
             const diskNameLower = diskFile.name.toLowerCase();
@@ -3627,7 +3836,7 @@ function performDiskScanForChannel(channel) {
             }
 
             if (bestMatch && bestScore >= 70) {
-                console.log(`[Disk Scan] ✅ Reverse match (score ${bestScore}): "${bestMatch.title?.substring(0, 40)}..." → ${diskFile.name}`);
+                console.log(`[Disk Scan] âœ… Reverse match (score ${bestScore}): "${bestMatch.title?.substring(0, 40)}..." â†’ ${diskFile.name}`);
                 syncResults[bestMatchIdx] = {
                     id: bestMatch.id || bestMatch.videoId,
                     isDownloaded: true,
@@ -3715,7 +3924,7 @@ const handleChannelSync = (req, res) => {
         });
 
     } catch (error) {
-        console.error('[Sync] ❌ Error:', error.message);
+        console.error('[Sync] âŒ Error:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to check sync status: ' + error.message
@@ -3736,7 +3945,7 @@ app.post('/api/channels/save-all', (req, res) => {
                 const removed = savedChannels.get(id);
                 savedChannels.delete(id);
                 deletedCount++;
-                console.log(`[Save Channels] 🗑️ Removed orphan channel: ${removed?.name || id}`);
+                console.log(`[Save Channels] ðŸ—‘ï¸ Removed orphan channel: ${removed?.name || id}`);
             }
         }
 
@@ -3748,7 +3957,7 @@ app.post('/api/channels/save-all', (req, res) => {
         });
 
         saveDatabase();
-        console.log(`[Save Channels] ✅ Persisted ${savedCount} channels, removed ${deletedCount} orphans`);
+        console.log(`[Save Channels] âœ… Persisted ${savedCount} channels, removed ${deletedCount} orphans`);
 
         res.json({
             success: true,
@@ -4039,7 +4248,7 @@ app.post('/api/channels/sync-all-stream', async (req, res) => {
                 totalVideos: scanRes.total,
                 remaining: scanRes.total - scanRes.downloaded,
                 percentage,
-                message: `✅ ${channelName}: ${scanRes.downloaded}/${scanRes.total} downloaded`
+                message: `âœ… ${channelName}: ${scanRes.downloaded}/${scanRes.total} downloaded`
             });
 
             sseSend(res, 'progress', {
@@ -4062,7 +4271,7 @@ app.post('/api/channels/sync-all-stream', async (req, res) => {
             processed,
             message: `Sync complete for ${totalChannels} channel(s)`
         });
-        // ⭐ FIX: also emit `complete` — the frontend's Promise waits for this
+        // â­ FIX: also emit `complete` â€” the frontend's Promise waits for this
         // event to resolve. Without it, the Sync button stays disabled forever
         // and subsequent sync attempts become no-ops.
         sseSend(res, 'complete', {
@@ -4166,7 +4375,7 @@ app.post('/api/channels/:id/refresh', async (req, res) => {
 
             res.json({
                 success: true,
-                message: 'Channel is already up to date — no new videos found',
+                message: 'Channel is already up to date â€” no new videos found',
                 newVideoCount: 0,
                 totalVideoCount: (channel.videos || []).length,
                 previousVideoCount: existingVideoIds.size,
@@ -4178,7 +4387,7 @@ app.post('/api/channels/:id/refresh', async (req, res) => {
         console.log('='.repeat(80) + '\n');
 
     } catch (error) {
-        console.error('[Refresh Channel] ❌ Error:', error.message);
+        console.error('[Refresh Channel] âŒ Error:', error.message);
         console.log('='.repeat(80) + '\n');
         res.status(500).json({
             success: false,
@@ -4189,7 +4398,7 @@ app.post('/api/channels/:id/refresh', async (req, res) => {
 
 app.post('/api/channels/:id/stop', (req, res) => {
     const { id } = req.params;
-    console.log(`\n[Channel Action] ⏸️ STOP requested for channel downloads: ${id}`);
+    console.log(`\n[Channel Action] â¸ï¸ STOP requested for channel downloads: ${id}`);
 
     let stoppedCount = 0;
 
@@ -4323,7 +4532,7 @@ app.delete('/api/download-queue', (req, res) => {
 
 function executeSmartDownload(downloadId, videoUrl, outputPath, videoTitle) {
     if (_activeDownloadIds.has(downloadId)) {
-        console.warn(`[Smart Download] ⚠️ DUPLICATE SPAWN BLOCKED: ${videoTitle?.substring(0, 30)}...`);
+        console.warn(`[Smart Download] âš ï¸ DUPLICATE SPAWN BLOCKED: ${videoTitle?.substring(0, 30)}...`);
         return Promise.resolve({ success: true, message: 'Download already in progress (duplicate spawn blocked)' });
     }
 
@@ -4336,14 +4545,14 @@ function executeSmartDownload(downloadId, videoUrl, outputPath, videoTitle) {
         return Promise.reject(new Error('Download not found'));
     }
 
-    console.log(`\n[Smart Download] 🎯 Starting SMART download for: ${videoTitle}`);
+    console.log(`\n[Smart Download] ðŸŽ¯ Starting SMART download for: ${videoTitle}`);
     console.log(`[Smart Download] ID: ${downloadId}`);
 
     downloadManager.update(downloadId, { status: 'downloading', startTime: Date.now() });
 
     return analyzeVideoFormats(videoUrl)
         .then(formatInfo => {
-            console.log(`[Smart Download] 📊 Format analysis complete:`);
+            console.log(`[Smart Download] ðŸ“Š Format analysis complete:`);
             console.log(`   Selected: ${formatInfo.formatId} (${formatInfo.resolution}, ${formatInfo.ext})`);
 
             downloadManager.update(downloadId, { selectedFormat: formatInfo });
@@ -4351,11 +4560,11 @@ function executeSmartDownload(downloadId, videoUrl, outputPath, videoTitle) {
             return executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo, videoTitle);
         })
         .then(result => {
-            console.log(`[Smart Download] ✅ Download complete!`);
+            console.log(`[Smart Download] âœ… Download complete!`);
             return renameDownloadedFile(download, outputPath);
         })
         .then(renameResult => {
-            console.log(`[Smart Download] 📝 Rename result:`, renameResult);
+            console.log(`[Smart Download] ðŸ“ Rename result:`, renameResult);
 
             downloadManager.update(downloadId, {
                 status: 'completed',
@@ -4368,11 +4577,11 @@ function executeSmartDownload(downloadId, videoUrl, outputPath, videoTitle) {
                 } : {})
             });
 
-            console.log(`[Smart Download] ✅ Download job ${downloadId} completed successfully`);
+            console.log(`[Smart Download] âœ… Download job ${downloadId} completed successfully`);
             return renameResult;
         })
         .catch(error => {
-            console.error(`[Smart Download] ❌ Error:`, error.message);
+            console.error(`[Smart Download] âŒ Error:`, error.message);
 
             downloadManager.update(downloadId, {
                 status: 'error',
@@ -4403,10 +4612,10 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
         const tempFilename = `ytl_${downloadId}.mp4`;
         const tempPath = path.join(outputDir, tempFilename);
 
-        console.log(`[Execute Download] 🛡️ WINDOWS PATH FIX ACTIVE`);
+        console.log(`[Execute Download] ðŸ›¡ï¸ WINDOWS PATH FIX ACTIVE`);
         console.log(`[Execute Download] Temp file (short): ${tempFilename}`);
 
-        // ⭐ 3-step format escalation ladder.
+        // â­ 3-step format escalation ladder.
         //    attemptIndex = 0 -> baseline format
         //    attemptIndex = 1 -> next-higher existing format
         //    attemptIndex = 2 -> one more higher
@@ -4430,7 +4639,7 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
 
         let formatSelector = buildSelectorForAttempt(0);
         if (escalationLadder.length > 1) {
-            console.log(`[Execute Download] 📈 Escalation ladder ready: ${escalationLadder.length} step(s) (${escalationLadder.map(s => s.formatId).join(' -> ')})`);
+            console.log(`[Execute Download] ðŸ“ˆ Escalation ladder ready: ${escalationLadder.length} step(s) (${escalationLadder.map(s => s.formatId).join(' -> ')})`);
         }
 
         const baseArgs = YTDLP_GLOBAL_FLAGS_ARR.concat([
@@ -4438,20 +4647,20 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
             '-o', tempPath,
             '--no-playlist',
             '--merge-output-format', 'mp4',
-            videoUrl                          // ⭐ PATCH: URL must be in baseArgs
+            videoUrl                          // â­ PATCH: URL must be in baseArgs
         ]);                                   //    so escalation retries include it
 
         if (isLiveStreamVideo) {
             baseArgs.push('--wait-for-video', '0.1');
             baseArgs.push('--no-check-certificates');
             baseArgs.push('--socket-timeout', '60');
-            console.log(`[Execute Download] 🎴 Added live stream compatibility flags`);
+            console.log(`[Execute Download] ðŸŽ´ Added live stream compatibility flags`);
         }
 
         if (FFMPEG_AVAILABLE) {
-            console.log('[Execute Download] ✅ FFmpeg available for merging');
+            console.log('[Execute Download] âœ… FFmpeg available for merging');
         } else {
-            console.warn('[Execute Download] ⚠️ FFmpeg NOT detected — DASH merge may fail');
+            console.warn('[Execute Download] âš ï¸ FFmpeg NOT detected â€” DASH merge may fail');
         }
 
         const cookieStrategies = [];
@@ -4491,13 +4700,13 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
 
             if (strategy.type === 'refresh') {
                 if (strategy._consumed) {
-                    console.log('[Execute Download] ⏭️ Strategy 4 already consumed in this chain — skipping past');
+                    console.log('[Execute Download] â­ï¸ Strategy 4 already consumed in this chain â€” skipping past');
                     tryDownloadWithStrategy();
                     return;
                 }
                 strategy._consumed = true;
 
-                console.log(`\n[Execute Download] 🔄 Strategy ${strategyIdx}/${cookieStrategies.length}: Refreshing cookies via Edge browse...`);
+                console.log(`\n[Execute Download] ðŸ”„ Strategy ${strategyIdx}/${cookieStrategies.length}: Refreshing cookies via Edge browse...`);
                 refreshCookiesViaEdgeBrowse().then(refreshResult => {
                     if (refreshResult.success || refreshResult.reason === 'cooldown') {
                         const hasFileStrat = cookieStrategies.some(s => s.type === 'file');
@@ -4510,31 +4719,31 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                                 args: ['--cookies', AUTH_CONFIG.cookieFilePath],
                                 type: 'file'
                             });
-                            console.log('[Execute Download] ✅ Spliced cookies.txt entry after Strategy 4 refresh');
+                            console.log('[Execute Download] âœ… Spliced cookies.txt entry after Strategy 4 refresh');
                             strategyIdx = insertIdx;
                         } else if (hasFileStrat) {
                             const fileIdx = cookieStrategies.findIndex(s => s.type === 'file');
                             strategyIdx = fileIdx;
-                            console.log(`[Execute Download] ✅ Retrying Strategy 2 (cookies.txt) at index ${fileIdx}`);
+                            console.log(`[Execute Download] âœ… Retrying Strategy 2 (cookies.txt) at index ${fileIdx}`);
                         } else {
-                            console.error('[Execute Download] ❌ Strategy 4 completed but cookies.txt still missing/invalid');
+                            console.error('[Execute Download] âŒ Strategy 4 completed but cookies.txt still missing/invalid');
                             reject(new Error('Strategy 4 (' + refreshResult.reason + '): cookies.txt still invalid after refresh'));
                             return;
                         }
                         tryDownloadWithStrategy();
                     } else {
-                        console.error(`[Execute Download] ❌ Strategy 4 failed (${refreshResult.reason})`);
+                        console.error(`[Execute Download] âŒ Strategy 4 failed (${refreshResult.reason})`);
                         reject(new Error('Strategy 4 (' + refreshResult.reason + '): all cookie strategies failed'));
                     }
                 }).catch(err => {
-                    console.error('[Execute Download] ❌ Strategy 4 unexpected error:', err.message);
+                    console.error('[Execute Download] âŒ Strategy 4 unexpected error:', err.message);
                     reject(err);
                 });
                 return;
             }
 
             const args = baseArgs.concat(strategy.args);
-            // ⭐ PATCH: URL already in baseArgs — no need to push again
+            // â­ PATCH: URL already in baseArgs â€” no need to push again
 
             console.log(`\n[Execute Download] Cookie strategy ${strategyIdx}/${cookieStrategies.length}: ${strategy.name}`);
             console.log(`[Execute Download] Command: ${YTDLP_BIN} ${args.join(' ').substring(0, 200)}...`);
@@ -4544,6 +4753,14 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                 shell: false,
                 windowsHide: true,
                 cwd: outputDir
+            });
+
+            activeChildProcesses.set(downloadId, {
+                proc: ytDlpProcess,
+                videoUrl,
+                outputPath,
+                videoTitle,
+                formatInfo
             });
 
             let stdoutData = '';
@@ -4570,11 +4787,13 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
             });
 
             ytDlpProcess.on('error', (err) => {
+                activeChildProcesses.delete(downloadId);
                 console.error(`[Execute Download] Spawn error (strategy ${strategyIdx}):`, err.message);
                 tryDownloadWithStrategy();
             });
 
             ytDlpProcess.on('close', (code) => {
+                activeChildProcesses.delete(downloadId);
                 if (code === 0) {
                     console.log(`[Execute Download] Download complete (strategy ${strategyIdx}: ${strategy.name})`);
 
@@ -4591,7 +4810,7 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                             }
                         }
 
-                        // ⭐ FIX: yt-dlp may leave format-tagged files like
+                        // â­ FIX: yt-dlp may leave format-tagged files like
                         //   ytl_<uuid>.f160.mp4, ytl_<uuid>.f251.webm when ffmpeg
                         //   merge fails. Scan the directory for any file starting
                         //   with "ytl_<uuid>" and pick the largest (video stream).
@@ -4611,13 +4830,13 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                                 if (candidates.length > 0) {
                                     actualFile = candidates[0].path;
                                     orphanedTempFiles = candidates.map(c => c.path);
-                                    console.warn(`[Execute Download] ⚠️ FFmpeg merge failed — using largest partial: ${candidates[0].name} (${(candidates[0].size / 1024 / 1024).toFixed(2)} MB)`);
+                                    console.warn(`[Execute Download] âš ï¸ FFmpeg merge failed â€” using largest partial: ${candidates[0].name} (${(candidates[0].size / 1024 / 1024).toFixed(2)} MB)`);
                                     if (candidates.length > 1) {
                                         console.warn(`[Execute Download]    ${candidates.length - 1} orphan(s) will be cleaned up after rename`);
                                     }
                                 }
                             } catch (scanErr) {
-                                console.warn(`[Execute Download] ⚠️ Fallback scan failed:`, scanErr.message);
+                                console.warn(`[Execute Download] âš ï¸ Fallback scan failed:`, scanErr.message);
                             }
                         }
                     }
@@ -4643,18 +4862,18 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                         let safeBaseName = sanitizedBaseName;
                         if (safeBaseName.length > maxBaseLen) {
                             safeBaseName = safeBaseName.substring(0, maxBaseLen);
-                            console.log(`[Execute Download] ⚠️ Base name truncated to ${maxBaseLen} chars`);
+                            console.log(`[Execute Download] âš ï¸ Base name truncated to ${maxBaseLen} chars`);
                         }
 
                         const safeFilename = ensureUniqueOnDisk(outputDir, safeBaseName + ext);
                         let finalPath = path.join(outputDir, safeFilename);
 
                         fs.renameSync(actualFile, finalPath);
-                        console.log(`[Execute Download] 📝 Renamed to: ${path.basename(finalPath)}`);
+                        console.log(`[Execute Download] ðŸ“ Renamed to: ${path.basename(finalPath)}`);
 
                         let currentFilename = path.basename(finalPath);
 
-                        // ⭐ FIX: if the file still has a ytl_<uuid> temp name
+                        // â­ FIX: if the file still has a ytl_<uuid> temp name
                         // (because the title-based rename was skipped by
                         // renameDownloadedFile due to a truthy finalFilename
                         // from the frontend), force a rename using the download's
@@ -4665,7 +4884,7 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                             currentFilename = leakCheck.filename;
                         }
 
-                        // ⭐ FIX: Clean up orphaned format-tagged temp files
+                        // â­ FIX: Clean up orphaned format-tagged temp files
                         // (e.g. ytl_<uuid>.f251.webm audio stream left behind
                         // when ffmpeg couldn't merge).
                         if (orphanedTempFiles.length > 0) {
@@ -4674,10 +4893,10 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                                 try {
                                     if (fs.existsSync(orphanPath)) {
                                         fs.unlinkSync(orphanPath);
-                                        console.log(`[Execute Download] 🧹 Cleaned up orphan: ${path.basename(orphanPath)}`);
+                                        console.log(`[Execute Download] ðŸ§¹ Cleaned up orphan: ${path.basename(orphanPath)}`);
                                     }
                                 } catch (cleanErr) {
-                                    console.warn(`[Execute Download] ⚠️ Could not clean orphan ${path.basename(orphanPath)}:`, cleanErr.message);
+                                    console.warn(`[Execute Download] âš ï¸ Could not clean orphan ${path.basename(orphanPath)}:`, cleanErr.message);
                                 }
                             }
                         }
@@ -4696,7 +4915,7 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                                         const safeStampedName = ensureUniqueOnDisk(outputDir, stampedFilename);
                                         const stampedPath = path.join(outputDir, safeStampedName);
                                         fs.renameSync(finalPath, stampedPath);
-                                        console.log(`[Execute Download] 📅 Date-stamped: ${path.basename(stampedPath)}`);
+                                        console.log(`[Execute Download] ðŸ“… Date-stamped: ${path.basename(stampedPath)}`);
 
                                         downloadManager.update(downloadId, {
                                             filename: safeStampedName,
@@ -4716,7 +4935,7 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                                                 }
                                             }
                                         } catch (dbErr) {
-                                            console.warn(`[Execute Download] ⚠️ Could not sync DB finalFilename:`, dbErr.message);
+                                            console.warn(`[Execute Download] âš ï¸ Could not sync DB finalFilename:`, dbErr.message);
                                         }
                                     }
                                 }
@@ -4727,7 +4946,7 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                                     renamedFrom: path.basename(actualFile)
                                 });
                             } catch (stampErr) {
-                                console.warn(`[Execute Download] ⚠️ Date-stamp step failed (non-fatal):`, stampErr.message);
+                                console.warn(`[Execute Download] âš ï¸ Date-stamp step failed (non-fatal):`, stampErr.message);
                                 resolve({
                                     success: true,
                                     path: finalPath,
@@ -4739,18 +4958,18 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                         };
 
                         if (hasDateStampSuffix(currentFilename)) {
-                            console.log(`[Execute Download] ℹ️ File already has date suffix — skipping`);
+                            console.log(`[Execute Download] â„¹ï¸ File already has date suffix â€” skipping`);
                             applyDateStampAndFinish(null);
                         } else if (!vidId) {
-                            console.log(`[Execute Download] ℹ️ No videoId available — skipping date stamp`);
+                            console.log(`[Execute Download] â„¹ï¸ No videoId available â€” skipping date stamp`);
                             applyDateStampAndFinish(null);
                         } else {
-                            console.log(`[Execute Download] 📅 Fetching upload date for ${vidId}…`);
+                            console.log(`[Execute Download] ðŸ“… Fetching upload date for ${vidId}â€¦`);
                             getVideoUploadDateFromYouTube(vidId).then(applyDateStampAndFinish);
                         }
 
                     } catch (renameErr) {
-                        console.error(`[Execute Download] ❌ Rename failed:`, renameErr.message);
+                        console.error(`[Execute Download] âŒ Rename failed:`, renameErr.message);
                         const tempFile = path.join(outputDir, `ytl_${downloadId}.mp4`);
                         if (fs.existsSync(tempFile)) {
                             resolve({
@@ -4768,7 +4987,7 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                     const errorMsg = stderrData.substring(stderrData.length - 500);
                     console.error(`[Execute Download] Strategy ${strategyIdx} failed (code ${code}): ${errorMsg}`);
 
-                    // ⭐ 403 -> escalate to the next format step BEFORE trying
+                    // â­ 403 -> escalate to the next format step BEFORE trying
                     //    another cookie strategy. Cap at 3 total attempts.
                     const is403Error =
                         /HTTP Error 403/i.test(errorMsg) ||
@@ -4778,14 +4997,14 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                         const prev = escalationLadder[attemptIndex];
                         attemptIndex++;
                         const next = escalationLadder[attemptIndex];
-                        console.warn(`[Execute Download] 🔁 403 on format ${prev.formatId} (${prev.resolution}) — escalating to attempt ${attemptIndex + 1}/3`);
+                        console.warn(`[Execute Download] ðŸ” 403 on format ${prev.formatId} (${prev.resolution}) â€” escalating to attempt ${attemptIndex + 1}/3`);
                         console.warn(`[Execute Download]    next: format ${next.formatId} (${next.resolution}${next.vcodec ? ', ' + next.vcodec : ''})`);
 
                         // Rebuild args for the new attempt. Do NOT advance the
-                        // cookie strategy — that happens only after escalation
+                        // cookie strategy â€” that happens only after escalation
                         // is exhausted.
                         formatSelector = buildSelectorForAttempt(attemptIndex);
-                        // ⭐ PATCH: rebuild from baseArgs + current strategy's
+                        // â­ PATCH: rebuild from baseArgs + current strategy's
                         //    cookie args so the retry uses the same auth path.
                         const retryArgs = baseArgs.concat(strategy.args || []);
                         // Find and replace the -f value in the cloned arg list
@@ -4805,6 +5024,14 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                             cwd: outputDir
                         });
 
+                        activeChildProcesses.set(downloadId, {
+                            proc: retryProc,
+                            videoUrl,
+                            outputPath,
+                            videoTitle,
+                            formatInfo
+                        });
+
                         let retryStdout = '';
                         let retryStderr = '';
 
@@ -4816,6 +5043,7 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                         retryProc.stderr.on('data', (data) => { retryStderr += data.toString(); });
 
                         retryProc.on('error', (err) => {
+                            activeChildProcesses.delete(downloadId);
                             console.error(`[Execute Download] Escalation spawn error:`, err.message);
                             // Fall through to the original error path by
                             // recursing into the strategy retry.
@@ -4823,8 +5051,9 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                         });
 
                         retryProc.on('close', (retryCode) => {
+                            activeChildProcesses.delete(downloadId);
                             if (retryCode === 0) {
-                                console.log(`[Execute Download] ✅ Escalation succeeded on attempt ${attemptIndex + 1}/3 (format ${escalationLadder[attemptIndex].formatId})`);
+                                console.log(`[Execute Download] âœ… Escalation succeeded on attempt ${attemptIndex + 1}/3 (format ${escalationLadder[attemptIndex].formatId})`);
                                 // Re-run the success path by calling the same code
                                 // path the original close handler would have used.
                                 // Simplest: re-invoke the outer success handler by
@@ -4844,16 +5073,16 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                                         }
                                     }
                                     if (!fs.existsSync(actualFile)) {
-                                        // No output — treat as failure and try next
+                                        // No output â€” treat as failure and try next
                                         // cookie strategy.
-                                        console.warn(`[Execute Download] Escalation returned code 0 but no file — falling through`);
+                                        console.warn(`[Execute Download] Escalation returned code 0 but no file â€” falling through`);
                                         tryDownloadWithStrategy();
                                         return;
                                     }
                                     const stats = fs.statSync(actualFile);
                                     console.log(`[Execute Download] Downloaded (escalated): ${path.basename(actualFile)} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
 
-                                    // ⭐ PATCH Q1: update downloadManager with the ACTUAL on-disk
+                                    // â­ PATCH Q1: update downloadManager with the ACTUAL on-disk
                                     //    filename and path so renameDownloadedFile() can find it.
                                     //    Without this, the rename step looks for the title-based name,
                                     //    fails with 'file_not_found', and the file stays as ytl_<uuid>.mp4.
@@ -4877,20 +5106,20 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
 
                                 if (is403Again && attemptIndex < escalationLadder.length - 1 && attemptIndex < 2) {
                                     // Recursively escalate using the same close
-                                    // handler logic — easiest is to just let the
+                                    // handler logic â€” easiest is to just let the
                                     // outer close handler run again by faking a
                                     // non-zero close on the original process.
                                     // We emulate that by calling the escalate
                                     // block again via a small helper.
-                                    // ⭐ PATCH R3: handleEscalationLoop was never defined; fall through
+                                    // â­ PATCH R3: handleEscalationLoop was never defined; fall through
                                     //    to the cookie-strategy retry path instead.
-                                    console.warn('[Execute Download] ⚠️ Double-403 during escalation — falling back to next cookie strategy');
+                                    console.warn('[Execute Download] âš ï¸ Double-403 during escalation â€” falling back to next cookie strategy');
                                     tryDownloadWithStrategy();
                                     return;
                                 }
 
                                 // Escalation exhausted for this strategy
-                                console.warn(`[Execute Download] 🛑 All ${attemptIndex + 1} format attempt(s) exhausted for this cookie strategy`);
+                                console.warn(`[Execute Download] ðŸ›‘ All ${attemptIndex + 1} format attempt(s) exhausted for this cookie strategy`);
                                 tryDownloadWithStrategy();
                             }
                         });
@@ -4898,7 +5127,7 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
                     }
 
                     if (is403Error && attemptIndex >= escalationLadder.length - 1) {
-                        console.warn(`[Execute Download] 🛑 Format escalation exhausted (${attemptIndex + 1} attempts) — falling back to next cookie strategy`);
+                        console.warn(`[Execute Download] ðŸ›‘ Format escalation exhausted (${attemptIndex + 1} attempts) â€” falling back to next cookie strategy`);
                     }
 
                     // ---- Original auth-error handling (unchanged) ----
@@ -4915,7 +5144,7 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
 
                     if (isAuthError && !hasNext) {
                         console.error('\n[Execute Download] ============================================================');
-                        console.error('[Execute Download] ❌ ALL COOKIE STRATEGIES FAILED for age-restricted video');
+                        console.error('[Execute Download] âŒ ALL COOKIE STRATEGIES FAILED for age-restricted video');
                         console.error('[Execute Download] ============================================================');
                         logMissingAuthCookies();
                         console.error('[Execute Download] ============================================================\n');
@@ -4927,20 +5156,20 @@ function executeDownloadWithFormat(downloadId, videoUrl, outputPath, formatInfo,
 
             setTimeout(() => {
                 if (ytDlpProcess && !ytDlpProcess.killed) {
-                    // ⭐ PATCH: check if output file already exists — if so,
+                    // â­ PATCH: check if output file already exists â€” if so,
                     //    yt-dlp finished its work but is lingering on a socket.
                     const outExists = ['.mp4', '.webm', '.mkv'].some(ext =>
                         fs.existsSync(path.join(outputDir, `ytl_${downloadId}${ext}`))
                     );
                     if (outExists) {
-                        console.log('[Execute Download] 🧹 Cleaning up lingering process (file already complete)');
+                        console.log('[Execute Download] ðŸ§¹ Cleaning up lingering process (file already complete)');
                     } else {
-                        console.log('[Execute Download] ⏰ Timeout reached, killing process');
+                        console.log('[Execute Download] â° Timeout reached, killing process');
                     }
                     ytDlpProcess.kill();
                     if (!outExists) reject(new Error('Download timeout (45 minutes)'));
                 }
-            }, 45 * 60 * 1000);   // ⭐ PATCH: bumped from 30 to 45 minutes
+            }, 45 * 60 * 1000);   // â­ PATCH: bumped from 30 to 45 minutes
         };
 
         tryDownloadWithStrategy();
@@ -4960,7 +5189,7 @@ async function renameDownloadedFile(downloadObj, originalPath) {
             console.log('[Rename] Original path missing - falling back to downloadObj.outputPath:', path.basename(downloadObj.outputPath));
             originalPath = downloadObj.outputPath;
         }
-        // ⭐ PATCH S2: If Q1's escalation-rename step updated
+        // â­ PATCH S2: If Q1's escalation-rename step updated
         //    downloadManager.filename to the on-disk temp name, the old
         //    skip condition would take the 'SKIPPING RENAME' path and
         //    leave the file as ytl_<uuid>.mp4. Detect that case and
@@ -4969,17 +5198,17 @@ async function renameDownloadedFile(downloadObj, originalPath) {
             /^ytl_[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(downloadObj?.filename || ''));
 
         if (downloadObj && downloadObj.filename && !downloadObj.needsRename && !originalIsTemp && !downloadObjFilenameIsTemp) {
-            console.log('[Rename] ✅✅✅ SKIPPING RENAME - has correct filename from dedup system!');
+            console.log('[Rename] âœ…âœ…âœ… SKIPPING RENAME - has correct filename from dedup system!');
 
             const expectedPath = path.join(path.dirname(originalPath), downloadObj.filename);
             if (fs.existsSync(originalPath)) {
                 if (originalPath !== expectedPath) {
                     try {
                         fs.renameSync(originalPath, expectedPath);
-                        console.log('[Rename] 📝 Renamed temp → final:', downloadObj.filename);
+                        console.log('[Rename] ðŸ“ Renamed temp â†’ final:', downloadObj.filename);
                         resolve({ success: true, filename: downloadObj.filename, originalFilename: path.basename(originalPath) });
                     } catch (err) {
-                        console.error('[Rename] ❌ Rename failed:', err.message);
+                        console.error('[Rename] âŒ Rename failed:', err.message);
                         resolve({ success: false, reason: 'rename_error', filename: downloadObj.filename, error: err.message });
                     }
                 } else {
@@ -4988,7 +5217,7 @@ async function renameDownloadedFile(downloadObj, originalPath) {
             } else if (fs.existsSync(expectedPath)) {
                 resolve({ success: true, filename: downloadObj.filename, originalFilename: downloadObj.filename });
             } else {
-                console.log('[Rename] ⚠️ File not found at either location');
+                console.log('[Rename] âš ï¸ File not found at either location');
                 resolve({ success: false, reason: 'file_not_found', filename: null });
             }
             return;
@@ -4996,16 +5225,16 @@ async function renameDownloadedFile(downloadObj, originalPath) {
 
         const currentFilename = path.basename(originalPath);
 
-        // ⭐ FIX: If the on-disk file still looks like a temp name (ytl_<uuid>),
-        // do NOT trust downloadObj.filename — force a rename from the title.
+        // â­ FIX: If the on-disk file still looks like a temp name (ytl_<uuid>),
+        // do NOT trust downloadObj.filename â€” force a rename from the title.
         const onDiskIsTemp = /^ytl_[0-9a-f]{8}-[0-9a-f]{4}-/i.test(currentFilename);
 
         if (onDiskIsTemp) {
-            console.warn(`[Rename] ⚠️ On-disk file is still a temp name: "${currentFilename}" — ignoring downloadObj.filename and forcing rename`);
+            console.warn(`[Rename] âš ï¸ On-disk file is still a temp name: "${currentFilename}" â€” ignoring downloadObj.filename and forcing rename`);
         }
 
         if (!onDiskIsTemp && downloadObj.filename && currentFilename === downloadObj.filename) {
-            console.log('[Rename] ✅✅ FILE ALREADY HAS CORRECT NAME - skipping rename!');
+            console.log('[Rename] âœ…âœ… FILE ALREADY HAS CORRECT NAME - skipping rename!');
 
             if (fs.existsSync(originalPath)) {
                 const stats = fs.statSync(originalPath);
@@ -5023,7 +5252,7 @@ async function renameDownloadedFile(downloadObj, originalPath) {
         }
 
         if (!downloadObj || !downloadObj.title) {
-            console.log('[Rename] ⚠️ No title available, skipping rename');
+            console.log('[Rename] âš ï¸ No title available, skipping rename');
             resolve({ success: false, reason: 'no_title', filename: null, originalFilename: null });
             return;
         }
@@ -5041,7 +5270,7 @@ async function renameDownloadedFile(downloadObj, originalPath) {
         const newPath = path.join(originalDir, newFilename);
 
         if (!fs.existsSync(originalPath)) {
-            console.log('[Rename] ⚠️ Original file not found:', originalPath);
+            console.log('[Rename] âš ï¸ Original file not found:', originalPath);
 
             const extensions = ['.mp4', '.webm', '.mkv'];
             let foundAlternate = false;
@@ -5070,14 +5299,14 @@ async function renameDownloadedFile(downloadObj, originalPath) {
             counter++;
             finalNewFilename = `${sanitizedTitle} (${counter}).mp4`;
             finalNewPath = path.join(originalDir, finalNewFilename);
-            console.log('[Rename] ⚠️⚠️⚠️ DUPLICATE DETECTED! Trying:', finalNewFilename);
+            console.log('[Rename] âš ï¸âš ï¸âš ï¸ DUPLICATE DETECTED! Trying:', finalNewFilename);
         }
 
         try {
             fs.renameSync(originalPath, finalNewPath);
             const stats = fs.statSync(finalNewPath);
 
-            console.log('[Rename] ✅ Rename successful!');
+            console.log('[Rename] âœ… Rename successful!');
             console.log('[Rename] To:', finalNewFilename);
 
             resolve({
@@ -5090,7 +5319,7 @@ async function renameDownloadedFile(downloadObj, originalPath) {
             });
 
         } catch (err) {
-            console.error('[Rename] ❌ Rename failed:', err.message);
+            console.error('[Rename] âŒ Rename failed:', err.message);
             resolve({
                 success: false,
                 reason: err.code || 'unknown_error',
@@ -5107,7 +5336,7 @@ async function renameDownloadedFile(downloadObj, originalPath) {
 // =============================================================================
 
 // =============================================================================
-// ⭐ Build a 3-step format escalation ladder from a parsed format list.
+// â­ Build a 3-step format escalation ladder from a parsed format list.
 //
 // Rule:
 //   - Step 1 = the baseline format the analyzer already chose.
@@ -5127,7 +5356,7 @@ function buildEscalationLadder(formats, baseline) {
     }];
 
     const baseArea = parseResolutionArea(baseline.resolution);
-    if (baseArea <= 0) return ladder;   // can't compare — bail with just baseline
+    if (baseArea <= 0) return ladder;   // can't compare â€” bail with just baseline
 
     // Distinct video-only resolutions strictly ABOVE the baseline, ascending.
     const higher = formats
@@ -5136,7 +5365,7 @@ function buildEscalationLadder(formats, baseline) {
         .filter(f => f._area > baseArea)
         .sort((a, b) => a._area - b._area);
 
-    // Deduplicate by pixel area — we don't want two candidates at the same
+    // Deduplicate by pixel area â€” we don't want two candidates at the same
     // quality; one rung per distinct resolution tier is the intent.
     const seenAreas = new Set([baseArea]);
     const rungs = [];
@@ -5182,7 +5411,7 @@ function analyzeVideoFormats(videoUrl) {
             strategies,
             0,
             (stdout) => {
-                console.log('[Format Analyzer] ✅ Got format list, parsing...');
+                console.log('[Format Analyzer] âœ… Got format list, parsing...');
 
                 try {
                     const formats = parseFormatsFromText(stdout);
@@ -5194,16 +5423,16 @@ function analyzeVideoFormats(videoUrl) {
 
                     const selected = selectBestFormat(formats);
 
-                    console.log('[Format Analyzer] 🎯 Selected format:');
+                    console.log('[Format Analyzer] ðŸŽ¯ Selected format:');
                     console.log('   ID:', selected.formatId);
                     console.log('   Resolution:', selected.resolution);
                     console.log('   Size:', selected.filesizeMB || 'unknown', 'MB');
 
-                    // ⭐ Build a 3-step escalation ladder (baseline + 2 higher tiers).
+                    // â­ Build a 3-step escalation ladder (baseline + 2 higher tiers).
                     //    Used by executeDownloadWithFormat() when a 403 hits.
                     const escalationLadder = buildEscalationLadder(formats, selected);
                     if (escalationLadder.length > 1) {
-                        console.log('[Format Analyzer] 📈 Escalation ladder (max 3 attempts):');
+                        console.log('[Format Analyzer] ðŸ“ˆ Escalation ladder (max 3 attempts):');
                         escalationLadder.forEach((c, i) => {
                             console.log(`   step ${i + 1}/3: format ${c.formatId} (${c.resolution}${c.vcodec ? ', ' + c.vcodec : ''})`);
                         });
@@ -5220,7 +5449,7 @@ function analyzeVideoFormats(videoUrl) {
                 }
             },
             (error) => {
-                console.log('[Format Analyzer] ❌ All strategies failed, using default:', error.message);
+                console.log('[Format Analyzer] âŒ All strategies failed, using default:', error.message);
                 resolve({
                     formatId: 'best[ext=mp4]/best',
                     resolution: 'auto',
@@ -5308,10 +5537,10 @@ function parseFormatsFromText(text) {
 function selectBestFormat(formats) {
     const videoFormats = formats.filter(f => !f.isAudioOnly);
 
-    // ⭐ PATCH R1b (revised): Prefer KNOWN-reliable muxed MP4 only —
+    // â­ PATCH R1b (revised): Prefer KNOWN-reliable muxed MP4 only â€”
     //    formats 394-399 are the modern YouTube muxed series. Format 18
     //    (classic 360p muxed) appears in the format list but frequently
-    //    fails with 'Requested format is not available' — skip it.
+    //    fails with 'Requested format is not available' â€” skip it.
     const RELIABLE_MUXED_IDS = new Set(['394', '395', '396', '397', '398', '399']);
     const _muxed = videoFormats.filter(f =>
         RELIABLE_MUXED_IDS.has(String(f.formatId)) &&
@@ -5322,7 +5551,7 @@ function selectBestFormat(formats) {
             (a.filesizeMB || 9999) - (b.filesizeMB || 9999)
         );
         const _chosen = _sorted[0];
-        console.log('[Format Analyzer] ⭐ R1b: preferring reliable muxed format', _chosen.formatId);
+        console.log('[Format Analyzer] â­ R1b: preferring reliable muxed format', _chosen.formatId);
         return { ..._chosen, needsMerge: false };
     }
 
@@ -5381,7 +5610,7 @@ function findBestAudioFormat(formats) {
 
 app.post('/api/download/batch', async (req, res) => {
     console.log('\n' + '='.repeat(80));
-    console.log('📦 [Batch Download] POST /api/download/batch');
+    console.log('ðŸ“¦ [Batch Download] POST /api/download/batch');
     console.log('='.repeat(80));
 
     try {
@@ -5450,7 +5679,7 @@ app.post('/api/download/batch', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('[Batch Download] ❌ Error:', error.message);
+        console.error('[Batch Download] âŒ Error:', error.message);
         res.status(500).json({ success: false, error: 'Batch download failed: ' + error.message });
     }
 });
@@ -5473,7 +5702,7 @@ let sequentialQueue = {
 
 app.post('/api/download/sequential', async (req, res) => {
     console.log('\n' + '='.repeat(80));
-    console.log('📥 [Sequential Download] POST /api/download/sequential');
+    console.log('ðŸ“¥ [Sequential Download] POST /api/download/sequential');
     console.log('='.repeat(80));
 
     try {
@@ -5521,7 +5750,7 @@ app.post('/api/download/sequential', async (req, res) => {
         processSequentialQueue(outputDir, format, quality, channelId);
 
     } catch (error) {
-        console.error('[Sequential Download] ❌ Error:', error.message);
+        console.error('[Sequential Download] âŒ Error:', error.message);
         if (!res.headersSent) {
             res.status(500).json({
                 success: false,
@@ -5532,11 +5761,11 @@ app.post('/api/download/sequential', async (req, res) => {
 });
 
 async function processSequentialQueue(outputDir, format, quality, channelId) {
-    console.log('\n[Sequential Queue] 🚀 Starting sequential processing...');
+    console.log('\n[Sequential Queue] ðŸš€ Starting sequential processing...');
 
     while (sequentialQueue.currentIndex < sequentialQueue.totalVideos) {
         if (sequentialQueue.cancelRequested) {
-            console.log('[Sequential Queue] ⛔ Cancellation requested, stopping...');
+            console.log('[Sequential Queue] â›” Cancellation requested, stopping...');
             break;
         }
 
@@ -5545,6 +5774,15 @@ async function processSequentialQueue(outputDir, format, quality, channelId) {
         }
 
         if (sequentialQueue.cancelRequested) break;
+
+        if (!networkMonitor.isOnline()) {
+            console.log('[Sequential Queue] \u23f8\ufe0f Network offline - waiting for connection...');
+            while (!networkMonitor.isOnline() && !sequentialQueue.cancelRequested) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            if (sequentialQueue.cancelRequested) break;
+            console.log('[Sequential Queue] \u25b6\ufe0f Network restored - continuing');
+        }
 
         const video = sequentialQueue.videos[sequentialQueue.currentIndex];
         const index = sequentialQueue.currentIndex + 1;
@@ -5594,7 +5832,7 @@ async function processSequentialQueue(outputDir, format, quality, channelId) {
             });
 
         } catch (error) {
-            console.error(`[Sequential Queue] ❌ Video [${index}] FAILED:`, error.message);
+            console.error(`[Sequential Queue] âŒ Video [${index}] FAILED:`, error.message);
 
             sequentialQueue.results.push({
                 index: sequentialQueue.currentIndex,
@@ -5611,7 +5849,7 @@ async function processSequentialQueue(outputDir, format, quality, channelId) {
         sequentialQueue.currentIndex++;
 
         if (sequentialQueue.currentIndex < sequentialQueue.totalVideos) {
-            console.log('[Sequential Queue] ⏳ Waiting 5 seconds before next download...');
+            console.log('[Sequential Queue] â³ Waiting 5 seconds before next download...');
             await new Promise(resolve => setTimeout(resolve, 5000));
         }
     }
@@ -5623,7 +5861,7 @@ async function processSequentialQueue(outputDir, format, quality, channelId) {
     const successCount = sequentialQueue.results.filter(r => r.status === 'completed').length;
     const failCount = sequentialQueue.results.filter(r => r.status === 'failed').length;
 
-    console.log(`\n[Sequential Queue] 🎉 SEQUENTIAL DOWNLOAD COMPLETE!`);
+    console.log(`\n[Sequential Queue] ðŸŽ‰ SEQUENTIAL DOWNLOAD COMPLETE!`);
     console.log(`[Sequential Queue] Total time: ${Math.floor(duration / 60)}m ${duration % 60}s`);
     console.log(`[Sequential Queue] Successful: ${successCount}/${sequentialQueue.totalVideos}`);
     console.log(`[Sequential Queue] Failed: ${failCount}/${sequentialQueue.totalVideos}`);
@@ -5831,6 +6069,47 @@ app.post('/api/download/:id/force-stop', (req, res) => {
 // SYSTEM STATUS
 // =============================================================================
 
+app.get('/api/network/status', (req, res) => {
+    res.json({
+        success: true,
+        ...networkMonitor.status(),
+        queuePaused: downloadQueue.isPausedByNetwork(),
+        activeDownloads: downloadQueue.activeJobs.length,
+        queuedDownloads: downloadQueue.queue.length,
+        bufferedDownloads: downloadQueue.pendingBuffer.length
+    });
+});
+
+const _networkSSEClients = new Set();
+function sseBroadcastNetwork(state) {
+    const payload = 'event: network\ndata: ' + JSON.stringify({ state, ...networkMonitor.status() }) + '\n\n';
+    for (const client of _networkSSEClients) {
+        try { client.write(payload); } catch {}
+    }
+}
+
+app.get('/api/network/stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    _networkSSEClients.add(res);
+    try {
+        res.write('event: network\ndata: ' + JSON.stringify({
+            state: networkMonitor.isOnline() ? 'online' : 'offline',
+            ...networkMonitor.status()
+        }) + '\n\n');
+    } catch {}
+    const hb = setInterval(() => {
+        try { res.write(': hb\n\n'); } catch {}
+    }, 15000);
+    req.on('close', () => {
+        clearInterval(hb);
+        _networkSSEClients.delete(res);
+    });
+});
+
 app.get('/api/system/status', (req, res) => {
     const activeDownloads = downloadManager.getActive();
     const completedDownloads = downloadManager.getCompleted();
@@ -5988,7 +6267,7 @@ async function applyDateStampsForChannel(channel, res) {
     }
 
     for (const item of notOnDisk) {
-        emitVideo(item, 'not_on_disk', { message: 'File not found on disk — skipping' });
+        emitVideo(item, 'not_on_disk', { message: 'File not found on disk â€” skipping' });
     }
 
     if (pending.length > 0) {
@@ -6029,7 +6308,7 @@ async function applyDateStampsForChannel(channel, res) {
                         oldFilename: item.currentName,
                         newFilename: safeNewName,
                         uploadDate,
-                        message: `Renamed → ${safeNewName}`
+                        message: `Renamed â†’ ${safeNewName}`
                     });
                 } catch (renameErr) {
                     failed++;
@@ -6043,7 +6322,7 @@ async function applyDateStampsForChannel(channel, res) {
                 channelId: channel.id,
                 round,
                 remaining: remainingCount,
-                message: `YouTube rate-limited — retry round ${round}`
+                message: `YouTube rate-limited â€” retry round ${round}`
             });
         });
 
@@ -6215,7 +6494,7 @@ async function applyDateStampsForSingleFileFolder(res) {
                         oldFilename: item.filename,
                         newFilename: safeNewName,
                         uploadDate,
-                        message: `Renamed → ${safeNewName}`
+                        message: `Renamed â†’ ${safeNewName}`
                     });
                 } catch (renameErr) {
                     failed++;
@@ -6229,7 +6508,7 @@ async function applyDateStampsForSingleFileFolder(res) {
                 folder: 'Single-File',
                 round,
                 remaining: remainingCount,
-                message: `YouTube rate-limited — retry round ${round}`
+                message: `YouTube rate-limited â€” retry round ${round}`
             });
         });
 
@@ -6405,7 +6684,7 @@ app.post('/api/channels/:id/update-database', async (req, res) => {
 
         const orphanedFiles = downloadedFiles.filter(f => !consumedFiles.has(f.path));
         if (orphanedFiles.length > 0) {
-            console.log(`[Update DB] 📦 Adding ${orphanedFiles.length} orphaned files as new DB entries`);
+            console.log(`[Update DB] ðŸ“¦ Adding ${orphanedFiles.length} orphaned files as new DB entries`);
             sseSend(res, 'orphaned_start', {
                 count: orphanedFiles.length,
                 message: `Adding ${orphanedFiles.length} orphaned disk files to DB`
@@ -6466,7 +6745,7 @@ app.post('/api/channels/:id/update-database', async (req, res) => {
 
         res.end();
     } catch (err) {
-        console.error(`[Update DB] ❌ Error:`, err.message);
+        console.error(`[Update DB] âŒ Error:`, err.message);
         clearInterval(heartbeat);
         sseSend(res, 'error', { message: err.message });
         res.end();
@@ -6498,7 +6777,7 @@ app.post('/api/channels/:id/fix-dates', async (req, res) => {
         sseSend(res, 'complete', { channelId: id, ...result });
         res.end();
     } catch (err) {
-        console.error(`[Fix-Dates] ❌ Channel ${id} error:`, err.message);
+        console.error(`[Fix-Dates] âŒ Channel ${id} error:`, err.message);
         clearInterval(heartbeat);
         sseSend(res, 'error', { message: err.message });
         res.end();
@@ -6524,7 +6803,7 @@ app.post('/api/files/fix-dates-single-file', async (req, res) => {
         sseSend(res, 'complete', { folder: 'Single-File', ...result });
         res.end();
     } catch (err) {
-        console.error(`[Fix-Dates] ❌ Single-File error:`, err.message);
+        console.error(`[Fix-Dates] âŒ Single-File error:`, err.message);
         clearInterval(heartbeat);
         sseSend(res, 'error', { message: err.message });
         res.end();
@@ -6608,7 +6887,7 @@ app.post('/api/files/fix-dates-all', async (req, res) => {
         });
         res.end();
     } catch (err) {
-        console.error(`[Fix-Dates] ❌ All error:`, err.message);
+        console.error(`[Fix-Dates] âŒ All error:`, err.message);
         clearInterval(heartbeat);
         sseSend(res, 'error', { message: err.message });
         res.end();
@@ -6616,7 +6895,7 @@ app.post('/api/files/fix-dates-all', async (req, res) => {
 });
 
 // =============================================================================
-// REPAIR FILENAMES — fixes ytl_<uuid>.fXXX_* leaks from failed merges
+// REPAIR FILENAMES â€” fixes ytl_<uuid>.fXXX_* leaks from failed merges
 // =============================================================================
 
 app.post('/api/channels/:id/repair-filenames', async (req, res) => {
@@ -6684,7 +6963,7 @@ app.post('/api/channels/:id/repair-filenames', async (req, res) => {
                     processed, total: brokenFiles.length,
                     renamed, failed, skipped,
                     percentage: Math.round((processed / brokenFiles.length) * 100),
-                    message: `Skipped "${filename}" — no matching video in DB`
+                    message: `Skipped "${filename}" â€” no matching video in DB`
                 });
                 continue;
             }
@@ -6728,7 +7007,7 @@ app.post('/api/channels/:id/repair-filenames', async (req, res) => {
                     videoId,
                     oldFilename: filename,
                     newFilename: safeNewName,
-                    message: `✅ ${filename} → ${safeNewName}`
+                    message: `âœ… ${filename} â†’ ${safeNewName}`
                 });
             } catch (err) {
                 failed++;
@@ -6738,7 +7017,7 @@ app.post('/api/channels/:id/repair-filenames', async (req, res) => {
                     percentage: Math.round((processed / brokenFiles.length) * 100),
                     videoId,
                     error: err.message,
-                    message: `❌ Failed to rename "${filename}": ${err.message}`
+                    message: `âŒ Failed to rename "${filename}": ${err.message}`
                 });
             }
         }
@@ -6757,7 +7036,7 @@ app.post('/api/channels/:id/repair-filenames', async (req, res) => {
         });
         res.end();
     } catch (err) {
-        console.error(`[Repair Filenames] ❌ Error:`, err.message);
+        console.error(`[Repair Filenames] âŒ Error:`, err.message);
         clearInterval(heartbeat);
         sseSend(res, 'error', { message: err.message });
         res.end();
@@ -6769,7 +7048,7 @@ app.post('/api/channels/:id/repair-filenames', async (req, res) => {
 // =============================================================================
 
 app.use((err, req, res, next) => {
-    console.error('\n❌ [Server Error]', err.message);
+    console.error('\nâŒ [Server Error]', err.message);
     res.status(500).json({
         error: 'Internal server error',
         message: err.message
@@ -6842,109 +7121,133 @@ app.use((req, res) => {
 
 validateAuthConfig();
 
-// ⭐ FIX: Resolve Node FIRST (used by --js-runtimes), then populate the flags
+// â­ FIX: Resolve Node FIRST (used by --js-runtimes), then populate the flags
 detectNodeBinary();
-// ⭐ FIX: always pass just "node" and let yt-dlp resolve via PATH.
+// â­ FIX: always pass just "node" and let yt-dlp resolve via PATH.
 // Passing the full path breaks when the path contains spaces
 // (yt-dlp's CLI parser splits on whitespace).
 YTDLP_GLOBAL_FLAGS_ARR = ['--js-runtimes', 'node'];
 YTDLP_GLOBAL_FLAGS_STR = '--js-runtimes node';
 
-// ⭐ FIX: Resolve yt-dlp binary
+// â­ FIX: Resolve yt-dlp binary
 detectYtDlpBinary();
 
-// ⭐ FIX: Detect ffmpeg (PATH + imageio-ffmpeg fallback)
+// â­ FIX: Detect ffmpeg (PATH + imageio-ffmpeg fallback)
 detectFfmpeg();
 
 getNativeCookiePath();
 
-console.log('\n[Startup] 🔍 Checking yt-dlp version...');
+console.log('\n[Startup] ðŸ” Checking yt-dlp version...');
 try {
     const versionOut = execFileSync(YTDLP_BIN, ['--version'], {
         encoding: 'utf-8', windowsHide: true, timeout: 10000
     }).trim();
-    console.log(`[Startup] ✅ yt-dlp version: ${versionOut}`);
+    console.log(`[Startup] âœ… yt-dlp version: ${versionOut}`);
     console.log(`[Startup]    Global flags: ${YTDLP_GLOBAL_FLAGS_STR}`);
     console.log('[Startup]    If you see "Signature solving failed" errors, run:');
     console.log('[Startup]      python -m pip install -U "yt-dlp[default]" yt-dlp-ejs');
 } catch (e) {
-    console.warn(`[Startup] ⚠️ Could not verify yt-dlp: ${e.message}`);
+    console.warn(`[Startup] âš ï¸ Could not verify yt-dlp: ${e.message}`);
 }
 
-console.log('\n[Startup] 🍪 Checking cookies.txt for format issues...');
+console.log('\n[Startup] ðŸª Checking cookies.txt for format issues...');
 const repairResult = repairCookiesFile(AUTH_CONFIG.cookieFilePath);
 if (repairResult.repaired) {
-    console.log(`[Startup] ✅ cookies.txt auto-repaired: ${repairResult.fixedCount} line(s) fixed`);
+    console.log(`[Startup] âœ… cookies.txt auto-repaired: ${repairResult.fixedCount} line(s) fixed`);
     console.log(`[Startup]    Backup saved to: ${repairResult.backupPath}`);
 } else if (repairResult.reason && !repairResult.reason.includes('does not exist') && !repairResult.reason.includes('No issues')) {
-    console.log(`[Startup] ⚠️ cookies.txt repair skipped: ${repairResult.reason}`);
+    console.log(`[Startup] âš ï¸ cookies.txt repair skipped: ${repairResult.reason}`);
 } else if (repairResult.reason === 'No issues found') {
-    console.log(`[Startup] ✅ cookies.txt format is valid (no repair needed)`);
+    console.log(`[Startup] âœ… cookies.txt format is valid (no repair needed)`);
 }
 
 if (!isCookiesFileValid(false)) {
-    console.log('\n[Startup] 🔄 cookies.txt missing or invalid — attempting auto-extraction from browser...');
+    console.log('\n[Startup] ðŸ”„ cookies.txt missing or invalid â€” attempting auto-extraction from browser...');
     autoExtractCookiesViaPython({ browser: 'auto' }).then(extractResult => {
         if (extractResult.success) {
-            console.log(`\n[Startup] ✅ Auto-extraction succeeded! cookies.txt created (${extractResult.sizeBytes} bytes)`);
+            console.log(`\n[Startup] âœ… Auto-extraction succeeded! cookies.txt created (${extractResult.sizeBytes} bytes)`);
         } else {
-            console.log(`\n[Startup] ⚠️ Auto-extraction failed: ${extractResult.error}`);
+            console.log(`\n[Startup] âš ï¸ Auto-extraction failed: ${extractResult.error}`);
             if (extractResult.installCommand) {
                 console.log(`[Startup]    Fix: Run "${extractResult.installCommand}" then restart server`);
             }
         }
     });
 } else {
-    console.log('[Startup] ✅ cookies.txt is valid — auto-extraction not needed');
+    console.log('[Startup] âœ… cookies.txt is valid â€” auto-extraction not needed');
 }
 
 console.log('\n' + '='.repeat(70));
-console.log('🍪 COOKIE MODE DETECTION');
+console.log('ðŸª COOKIE MODE DETECTION');
 console.log('='.repeat(70));
 
 if (isCookiesFileValid()) {
-    console.log('✅ Mode: cookies.txt file (RECOMMENDED)');
+    console.log('âœ… Mode: cookies.txt file (RECOMMENDED)');
     console.log('   Path:', AUTH_CONFIG.cookieFilePath);
 } else {
-    console.log('⚠️  Mode: Browser fallback (' + AUTH_CONFIG.browserName + ')');
+    console.log('âš ï¸  Mode: Browser fallback (' + AUTH_CONFIG.browserName + ')');
     console.log('   Reason: cookies.txt not found or invalid format');
 }
 console.log('='.repeat(70) + '\n');
 
+// =============================================================================
+// NETWORK MONITOR WIRING + STARTUP
+// =============================================================================
+networkMonitor.on('offline', () => {
+    downloadQueue.pauseForNetwork();
+    sseBroadcastNetwork('offline');
+});
+networkMonitor.on('online', () => {
+    downloadQueue.resumeFromNetwork();
+    sseBroadcastNetwork('online');
+});
+
+networkMonitor.start();
+
+process.on('SIGINT', () => {
+    console.log('\n[Shutdown] SIGINT received - cleaning up...');
+    networkMonitor.stop();
+    for (const { proc } of activeChildProcesses.values()) {
+        try { proc.kill('SIGTERM'); } catch {}
+    }
+    activeChildProcesses.clear();
+    process.exit(0);
+});
+
 app.listen(PORT, () => {
-    console.log('╔══════════════════════════════════════════════════════════════╗');
-    console.log('║                   🚀 SERVER STARTED! 🚀                      ║');
-    console.log('║                                                              ║');
-    console.log(`║  🌐 Server:     http://localhost:${PORT}                            ║`);
-    console.log(`║  📁 Downloads:  ${DOWNLOADS_DIR}`);
-    console.log(`║  🎬 FFmpeg:     ${FFMPEG_AVAILABLE ? '✅ ' + (FFMPEG_PATH || 'on PATH') : '⚠️ Not found'}`);
-    console.log(`║  🍪 Cookies:    ${isCookiesFileValid() ? '✅ Valid' : '⚠️ Using browser'}`);
-    console.log(`║  🐍 yt-dlp:     ${YTDLP_BIN}`);
-    console.log(`║  🟢 Node:       ${NODE_BIN}`);
-    console.log('║  🔐 Auth:       ✅ Enabled (Session-based)                    ║');
-    console.log('║                                                              ║');
-    console.log('╠══════════════════════════════════════════════════════════════╣');
-    console.log('║  Available API Endpoints:                                   ║');
-    console.log('╠══════════════════════════════════════════════════════════════╣');
-    console.log('║  GET    /api/settings          View/change download folder     ║');
-    console.log('║  PUT    /api/settings          Update settings                 ║');
-    console.log('║  POST   /api/channels          Load channel videos             ║');
-    console.log('║  POST   /api/download          Download single video (queued)  ║');
-    console.log('║  POST   /api/download/batch    Batch download (sequential)     ║');
-    console.log('║  POST   /api/download/sequential Sequential (one at a time)    ║');
-    console.log('║  GET    /api/download/queue/status Queue status (max 2)        ║');
-    console.log('║  GET    /api/files             List all downloaded files       ║');
-    console.log('║  GET    /api/download-file/:id Download file by ID             ║');
-    console.log('╚══════════════════════════════════════════════════════════════╝');
+    console.log('â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—');
+    console.log('â•‘                   ðŸš€ SERVER STARTED! ðŸš€                      â•‘');
+    console.log('â•‘                                                              â•‘');
+    console.log(`â•‘  ðŸŒ Server:     http://localhost:${PORT}                            â•‘`);
+    console.log(`â•‘  ðŸ“ Downloads:  ${DOWNLOADS_DIR}`);
+    console.log(`â•‘  ðŸŽ¬ FFmpeg:     ${FFMPEG_AVAILABLE ? 'âœ… ' + (FFMPEG_PATH || 'on PATH') : 'âš ï¸ Not found'}`);
+    console.log(`â•‘  ðŸª Cookies:    ${isCookiesFileValid() ? 'âœ… Valid' : 'âš ï¸ Using browser'}`);
+    console.log(`â•‘  ðŸ yt-dlp:     ${YTDLP_BIN}`);
+    console.log(`â•‘  ðŸŸ¢ Node:       ${NODE_BIN}`);
+    console.log('â•‘  ðŸ” Auth:       âœ… Enabled (Session-based)                    â•‘');
+    console.log('â•‘                                                              â•‘');
+    console.log('â• â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•£');
+    console.log('â•‘  Available API Endpoints:                                   â•‘');
+    console.log('â• â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•£');
+    console.log('â•‘  GET    /api/settings          View/change download folder     â•‘');
+    console.log('â•‘  PUT    /api/settings          Update settings                 â•‘');
+    console.log('â•‘  POST   /api/channels          Load channel videos             â•‘');
+    console.log('â•‘  POST   /api/download          Download single video (queued)  â•‘');
+    console.log('â•‘  POST   /api/download/batch    Batch download (sequential)     â•‘');
+    console.log('â•‘  POST   /api/download/sequential Sequential (one at a time)    â•‘');
+    console.log('â•‘  GET    /api/download/queue/status Queue status (max 2)        â•‘');
+    console.log('â•‘  GET    /api/files             List all downloaded files       â•‘');
+    console.log('â•‘  GET    /api/download-file/:id Download file by ID             â•‘');
+    console.log('â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
     console.log('');
-    console.log('⭐ FEATURES ENABLED:');
-    console.log('   - ✅ Authentication (Session-based, 2-day expiry)');
-    console.log('   - ✅ Rate limiting (5 login attempts per 15 min)');
-    console.log('   - ✅ Duplicate filename handling');
-    console.log('   - ✅ Sequential download (one at a time)');
-    console.log('   - ⭐ Download Queue (MAX 2 concurrent, rest wait in queue)');
-    console.log('   - ⭐ JS runtime enabled for yt-dlp (--js-runtimes node)');
-    console.log('   - ⭐ FFmpeg auto-detection (PATH + imageio-ffmpeg fallback)');
-    console.log('   - ⭐ yt-dlp auto-detection (PATH + python + known locations)');
+    console.log('â­ FEATURES ENABLED:');
+    console.log('   - âœ… Authentication (Session-based, 2-day expiry)');
+    console.log('   - âœ… Rate limiting (5 login attempts per 15 min)');
+    console.log('   - âœ… Duplicate filename handling');
+    console.log('   - âœ… Sequential download (one at a time)');
+    console.log('   - â­ Download Queue (MAX 2 concurrent, rest wait in queue)');
+    console.log('   - â­ JS runtime enabled for yt-dlp (--js-runtimes node)');
+    console.log('   - â­ FFmpeg auto-detection (PATH + imageio-ffmpeg fallback)');
+    console.log('   - â­ yt-dlp auto-detection (PATH + python + known locations)');
     console.log('');
 });

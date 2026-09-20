@@ -278,14 +278,43 @@ REM =========================================================================
 REM  STEP 4: Run embedded bash script
 REM =========================================================================
 echo.
+REM ============================================================
+REM  STEP 3.5: Ask user about installing / upgrading dependencies
+REM ============================================================
+set "USER_SKIP_INSTALL="
+set "USER_SKIP_INSTALL_ARG="
+echo %* | findstr /i /c:"--no-install" >nul
+if not errorlevel 1 goto :skip_install_prompt
+echo.
+echo ============================================================
+echo   Install / upgrade dependencies before running?
+echo ============================================================
+echo.
+echo   Y or Enter : run steps 1-9 (pip/npm installs)
+echo   N          : skip installs, just start the server
+echo.
+set "INSTALL_CHOICE="
+set /p "INSTALL_CHOICE=Install dependencies? [Y/n]: "
+if /i "%INSTALL_CHOICE%"=="n"  set "USER_SKIP_INSTALL_ARG=--no-install"
+if /i "%INSTALL_CHOICE%"=="no" set "USER_SKIP_INSTALL_ARG=--no-install"
+echo.
+goto :after_install_prompt
+
+:skip_install_prompt
+echo [i] --no-install detected on command line - skipping prompt.
+set "USER_SKIP_INSTALL_ARG=--no-install"
+
+:after_install_prompt
+REM ============================================================
 echo [4/4] Running embedded bash script...
 echo.
 
 set "BASH_TMP_UNIX=%BASH_TMP:\=/%"
+if defined USER_SKIP_INSTALL set "USER_SKIP_INSTALL_ARG=--no-install"
 echo     bash path: %BASH_TMP_UNIX%
 echo.
 
-"%BASH_EXE%" "%BASH_TMP_UNIX%" %*
+"%BASH_EXE%" "%BASH_TMP_UNIX%" %* %USER_SKIP_INSTALL_ARG%
 set "EXIT_CODE=%errorlevel%"
 
 echo.
@@ -316,7 +345,7 @@ REM =========================================================================
 REM BASH_SCRIPT_START
 #!/usr/bin/env bash
 # -------------------------------------------------------------------------
-#  Embedded runtime — v19.0
+#  Embedded runtime ??? v19.0
 #  Dedicated debug profile + CDP-first cookie extraction
 #  + live banner highlighting for Node stdout
 # -------------------------------------------------------------------------
@@ -345,7 +374,7 @@ URL="http://localhost:$PORT"
 CDP_PORT=9222
 CDP_URL="http://127.0.0.1:$CDP_PORT"
 
-# ⭐ Resolve Windows user profile path correctly (v18 fix retained)
+# ??? Resolve Windows user profile path correctly (v18 fix retained)
 _win_user=""
 if command -v cygpath >/dev/null 2>&1 && [ -n "$USERPROFILE" ]; then
     _win_user="$(cygpath -w "$USERPROFILE" 2>/dev/null || echo "")"
@@ -395,10 +424,10 @@ warn()  { echo -e "${YELLOW}[!]${NC} $*"; _log "WARN $*"; }
 error() { echo -e "${RED}[x]${NC} $*"; _log "ERR  $*"; }
 dbg()   { [ "$DEBUG_MODE" = true ] && echo -e "${BLUE}[.]${NC} $*"; _log "DBG  $*"; }
 ok()    { echo -e "${CYAN}${BOLD}[OK]${NC} $*"; _log "OK   $*"; }
-step()  { echo -e "\n${BOLD}${CYAN}━━━ $* ━━━${NC}"; _log "STEP $*"; }
+step()  { echo -e "\n${BOLD}${CYAN}????????? $* ?????????${NC}"; _log "STEP $*"; }
 
 # =========================================================================
-# BANNER PRINTER — full-width colored box for important events
+# BANNER PRINTER ??? full-width colored box for important events
 # =========================================================================
 # Usage:   banner "SUCCESS" "DOWNLOAD SUCCESS" "Body line 1" "Body line 2"
 # Types:   SUCCESS / ERROR / WARN / INFO
@@ -409,13 +438,13 @@ banner() {
     local clr="" icon="" border=""
 
     case "$kind" in
-        SUCCESS) clr="${BG_GREEN}${FG_WHITE}${BOLD}"; icon=" ✅ "; border="═" ;;
-        ERROR)   clr="${BG_RED}${FG_WHITE}${BOLD}";   icon=" ❌ "; border="═" ;;
-        WARN)    clr="${BG_YELLOW}${FG_BLACK}${BOLD}"; icon=" ⚠️ "; border="═" ;;
-        *)       clr="${BG_CYAN}${FG_BLACK}${BOLD}";  icon=" ℹ️ "; border="═" ;;
+        SUCCESS) clr="${BG_GREEN}${FG_WHITE}${BOLD}"; icon=" ??? "; border="???" ;;
+        ERROR)   clr="${BG_RED}${FG_WHITE}${BOLD}";   icon=" ??? "; border="???" ;;
+        WARN)    clr="${BG_YELLOW}${FG_BLACK}${BOLD}"; icon=" ?????? "; border="???" ;;
+        *)       clr="${BG_CYAN}${FG_BLACK}${BOLD}";  icon=" ?????? "; border="???" ;;
     esac
 
-    # Box width (inner text = WIDTH - 2 for the ║ borders)
+    # Box width (inner text = WIDTH - 2 for the ??? borders)
     local WIDTH=70
     local inner=$((WIDTH - 2))
 
@@ -426,21 +455,21 @@ banner() {
         local plain
         plain=$(printf '%s' "$s" | sed 's/\x1b\[[0-9;]*m//g')
         local len=${#plain}
-        local pad=$((inner - len - 2))   # 2 = leading spaces inside ║
+        local pad=$((inner - len - 2))   # 2 = leading spaces inside ???
         if [ $pad -lt 0 ]; then pad=0; fi
         printf '  %s%*s' "$s" "$pad" ""
     }
 
     echo ""
-    printf "╔"
-    printf '═%.0s' $(seq 1 $((WIDTH - 2)))
-    printf "╗\n"
+    printf "???"
+    printf '???%.0s' $(seq 1 $((WIDTH - 2)))
+    printf "???\n"
 
-    printf "${clr}║%s║${NC}\n" "$(_pad "${icon}${title}")"
+    printf "${clr}???%s???${NC}\n" "$(_pad "${icon}${title}")"
 
-    printf "╠"
-    printf '═%.0s' $(seq 1 $((WIDTH - 2)))
-    printf "╣\n"
+    printf "???"
+    printf '???%.0s' $(seq 1 $((WIDTH - 2)))
+    printf "???\n"
 
     # Body lines (each arg becomes its own row)
     while [ $# -gt 0 ]; do
@@ -449,17 +478,17 @@ banner() {
         if [ ${#line} -gt $((inner - 2)) ]; then
             line="${line:0:$((inner - 2))}"
         fi
-        printf "║%s║\n" "$(_pad "$line")"
+        printf "???%s???\n" "$(_pad "$line")"
     done
 
-    printf "╚"
-    printf '═%.0s' $(seq 1 $((WIDTH - 2)))
-    printf "╝\n"
+    printf "???"
+    printf '???%.0s' $(seq 1 $((WIDTH - 2)))
+    printf "???\n"
     echo ""
 }
 
 # =========================================================================
-# LINE FILTER — inspects each line from Node's stdout and decides whether
+# LINE FILTER ??? inspects each line from Node's stdout and decides whether
 # to print it as-is, or wrap it in a colored banner first.
 # =========================================================================
 # Case-sensitive match on purpose: avoids false positives from generic words.
@@ -540,7 +569,7 @@ highlight_line() {
             ;;
     esac
 
-    # No match — print the raw line unchanged
+    # No match ??? print the raw line unchanged
     echo "$line"
     return 0
 }
@@ -980,7 +1009,7 @@ generate_extractor_scripts() {
     cat > "$PW_JS" << 'PWJSEOF'
 #!/usr/bin/env node
 /**
- * extract_cookies_playwright.js — Extract YouTube cookies via Playwright.
+ * extract_cookies_playwright.js ??? Extract YouTube cookies via Playwright.
  * Supports CDP connect (YTL_CDP_URL env) and fresh launch mode.
  */
 const fs = require('fs');
@@ -1004,7 +1033,7 @@ console.log('');
 
 let playwright;
 try { playwright = require('playwright'); }
-catch (e) { console.error('❌ Playwright not installed'); process.exit(1); }
+catch (e) { console.error('??? Playwright not installed'); process.exit(1); }
 
 function findEdgePath() {
     const cands = process.platform === 'win32'
@@ -1048,7 +1077,7 @@ function writeCookies(cookies, outputPath) {
     ].join('\n');
     const lines = cookies.map(toNetscapeLine);
     fs.writeFileSync(outputPath, header + lines.join('\n') + '\n', 'utf8');
-    console.log(`✅ Wrote ${cookies.length} cookies to: ${outputPath}`);
+    console.log(`??? Wrote ${cookies.length} cookies to: ${outputPath}`);
 }
 
 function verifyCritical(cookies) {
@@ -1058,8 +1087,8 @@ function verifyCritical(cookies) {
     console.log('Critical YouTube cookies check:');
     let allOk = true;
     for (const name of critical) {
-        if (names.has(name)) { console.log(`  ✅ ${name}`); }
-        else { console.log(`  ❌ ${name} MISSING`); allOk = false; }
+        if (names.has(name)) { console.log(`  ??? ${name}`); }
+        else { console.log(`  ??? ${name} MISSING`); allOk = false; }
     }
     return allOk;
 }
@@ -1073,14 +1102,14 @@ function verifyCritical(cookies) {
             cdpBrowser = await playwright.chromium.connectOverCDP(CDP_URL);
             context = cdpBrowser.contexts()[0];
             if (!context) throw new Error('No existing context');
-            console.log('✅ Connected to running Edge via CDP');
+            console.log('??? Connected to running Edge via CDP');
         } catch (e) {
-            console.error(`❌ CDP connect failed: ${e.message}`);
+            console.error(`??? CDP connect failed: ${e.message}`);
             process.exit(1);
         }
     } else {
         const edgePath = findEdgePath();
-        if (!edgePath) { console.error('❌ Edge not found'); process.exit(1); }
+        if (!edgePath) { console.error('??? Edge not found'); process.exit(1); }
         const profile = PROFILE_DIR || path.join(os.homedir(), 'EdgeDebugProfile');
         console.log(`Launching Edge with profile: ${profile}`);
         try {
@@ -1092,7 +1121,7 @@ function verifyCritical(cookies) {
                 args: ['--disable-blink-features=AutomationControlled','--no-first-run','--no-default-browser-check'],
             });
         } catch (e) {
-            console.error(`❌ Launch failed: ${e.message}`);
+            console.error(`??? Launch failed: ${e.message}`);
             process.exit(1);
         }
     }
@@ -1109,7 +1138,7 @@ function verifyCritical(cookies) {
 
         if (!signedIn) {
             console.log('');
-            console.log('⚠️  NOT SIGNED IN');
+            console.log('??????  NOT SIGNED IN');
             console.log('   You have 120 seconds to sign into YouTube in the browser window.');
             console.log('');
             const start = Date.now();
@@ -1119,10 +1148,10 @@ function verifyCritical(cookies) {
                     return !!(document.querySelector('#avatar-btn') ||
                              document.querySelector('button[aria-label*="Account"]'));
                 }).catch(() => false);
-                if (now) { console.log('✅ Sign-in detected'); break; }
+                if (now) { console.log('??? Sign-in detected'); break; }
             }
         } else {
-            console.log('✅ Already signed in');
+            console.log('??? Already signed in');
         }
 
         console.log('Visiting a YouTube video...');
@@ -1134,7 +1163,7 @@ function verifyCritical(cookies) {
         console.log(`Total cookies: ${allCookies.length}`);
         console.log(`YouTube/Google: ${yt.length}`);
 
-        if (yt.length === 0) { console.error('❌ No YouTube cookies'); process.exit(1); }
+        if (yt.length === 0) { console.error('??? No YouTube cookies'); process.exit(1); }
 
         writeCookies(yt, OUTPUT);
         const ok = verifyCritical(yt);
@@ -1143,7 +1172,7 @@ function verifyCritical(cookies) {
         else if (context) { try { await context.close(); } catch {} }
         process.exit(ok ? 0 : 1);
     } catch (e) {
-        console.error(`❌ Error: ${e.message}`);
+        console.error(`??? Error: ${e.message}`);
         try { if (cdpBrowser) await cdpBrowser.close(); else if (context) await context.close(); } catch {}
         process.exit(1);
     }
@@ -1555,7 +1584,7 @@ kill_edge_and_extract_cookies() {
     local PW_SCRIPT="$SCRIPT_DIR/extract_cookies_playwright.js"
 
     # =====================================================================
-    # Method 2.5a — Playwright CDP with dedicated debug profile (BEST)
+    # Method 2.5a ??? Playwright CDP with dedicated debug profile (BEST)
     # =====================================================================
     if [ -f "$PW_SCRIPT" ] && [ -n "$NODE_BIN" ]; then
         log "Method 2.5a: Playwright CDP (dedicated debug profile)..."
@@ -1605,7 +1634,7 @@ kill_edge_and_extract_cookies() {
     fi
 
     # =====================================================================
-    # Method 2.5b — Playwright fresh launch with dedicated profile
+    # Method 2.5b ??? Playwright fresh launch with dedicated profile
     # =====================================================================
     if [ -f "$PW_SCRIPT" ] && [ -n "$NODE_BIN" ]; then
         log "Method 2.5b: Playwright fresh launch (dedicated profile)..."
@@ -1631,7 +1660,7 @@ kill_edge_and_extract_cookies() {
     sleep 5
 
     # =====================================================================
-    # Method 1 — Python multi-strategy
+    # Method 1 ??? Python multi-strategy
     # =====================================================================
     local EXTRACTOR="$SCRIPT_DIR/extract_cookies.py"
     if [ -f "$EXTRACTOR" ] && [ -n "$PY_BIN" ]; then
@@ -1650,7 +1679,7 @@ kill_edge_and_extract_cookies() {
     fi
 
     # =====================================================================
-    # Method 4 — yt-dlp
+    # Method 4 ??? yt-dlp
     # =====================================================================
     local YTDLP_BIN; YTDLP_BIN=$(resolve_real_binary "yt-dlp") || true
     if [ -n "$YTDLP_BIN" ]; then
@@ -1691,7 +1720,7 @@ manual_cookies_export() {
     echo "       https://www.youtube.com"
     echo ""
     echo "  2. Sign into YouTube in that window"
-    echo "  3. Run 1.bat again — cookies will be auto-extracted"
+    echo "  3. Run 1.bat again ??? cookies will be auto-extracted"
     echo "=============================================================="
     echo ""
     read -p "Press Enter to continue... " || true
@@ -1727,8 +1756,8 @@ export_cookies_with_fallbacks() {
 install_npm_dependencies() {
     step "INSTALLING NODE.JS DEPENDENCIES"
     [ ! -d "$SERVER_DIR" ] && { error "Server dir not found"; return 1; }
-    [ ! -f "$SERVER_DIR/package.json" ] && { warn "No package.json"; return 1; }
-    cd "$SERVER_DIR" || { error "Cannot cd"; return 1; }
+    [ ! -f "$SCRIPT_DIR/package.json" ] && { warn "No package.json at project root"; return 1; }
+    cd "$SCRIPT_DIR" || { error "Cannot cd"; return 1; }
     local NPM_BIN; NPM_BIN=$(resolve_real_binary "npm") || true
     [ -z "$NPM_BIN" ] && { error "npm not found"; cd "$SCRIPT_DIR"; return 1; }
     RUN_TIMEOUT_SECONDS=600 RUN_TIMEOUT_RETRIES=1 RUN_TIMEOUT_HARD_CAP=20 \
@@ -1793,7 +1822,7 @@ start_server() {
     local FF_BIN; FF_BIN=$(resolve_real_binary "ffmpeg") || true
     [ -n "$FF_BIN" ] && { export PATH="$(dirname "$FF_BIN"):$PATH"; log "FFmpeg dir added to PATH"; }
 
-    cd "$SERVER_DIR" || { error "Cannot cd to server"; return 1; }
+    cd "$SCRIPT_DIR" || { error "Cannot cd to project root"; return 1; }
     [ ! -d "node_modules/express" ] && {
         warn "express missing - npm install..."
         local NPM_BIN; NPM_BIN=$(resolve_real_binary "npm") || true
@@ -1802,7 +1831,7 @@ start_server() {
     }
 
     # =====================================================================
-    # ⭐ Launch Node so that:
+    # ??? Launch Node so that:
     #   - We can filter every line through highlight_line()
     #   - server.log receives the RAW, unfiltered output
     #   - $! is the actual Node PID (not tee's)
@@ -1822,7 +1851,7 @@ start_server() {
         highlight_line "$line"
     done &
 
-    # Grab the PID of the *pipeline* leader — which is the subshell
+    # Grab the PID of the *pipeline* leader ??? which is the subshell
     # running `exec node`. That subshell's PID is Node's PID after exec.
     SERVER_PID=$!
 
