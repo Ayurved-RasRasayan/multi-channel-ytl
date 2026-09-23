@@ -1,6 +1,10 @@
 @echo off
 setlocal DisableDelayedExpansion
 chcp 65001 >nul 2>&1 || chcp 437 >nul 2>&1
+set PYTHONIOENCODING=utf-8
+set PYTHONUTF8=1
+set LANG=en_US.UTF-8
+set LC_ALL=en_US.UTF-8
 
 REM =========================================================================
 REM  YouTube Downloader - Windows Bootstrap + Embedded Bash Runtime
@@ -111,14 +115,8 @@ del "%TEMP%\.1sh_extract.ps1"              >nul 2>&1
 del "%SCRIPT_DIR%\.ytdlp_cookies.tmp"      >nul 2>&1
 del "%SCRIPT_DIR%\.pycookiecheat_out.tmp"  >nul 2>&1
 
-del "%SCRIPT_DIR%\cookies.txt"             >nul 2>&1
-del "%SCRIPT_DIR%\server\cookies.txt"      >nul 2>&1
 
 del "%SCRIPT_DIR%\.runtool.*.out"          >nul 2>&1
-del "%SCRIPT_DIR%\cookies.txt.bak.*"       >nul 2>&1
-del "%SCRIPT_DIR%\cookies.txt.backup.*"    >nul 2>&1
-del "%SCRIPT_DIR%\server\cookies.txt.bak.*"    >nul 2>&1
-del "%SCRIPT_DIR%\server\cookies.txt.backup.*" >nul 2>&1
 del "%SCRIPT_DIR%\server.js.backup.*"      >nul 2>&1
 del "%SCRIPT_DIR%\server.js.bak.*"         >nul 2>&1
 del "%SCRIPT_DIR%\server\server.js.backup.*" >nul 2>&1
@@ -354,6 +352,8 @@ SCRIPT_DIR_EARLY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLEANUP_LOG="$SCRIPT_DIR_EARLY/cleanup.log"
 GRACEFUL_DELAY=0
 
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
 export PYTHONIOENCODING=utf-8
 export PYTHONUTF8=1
 
@@ -390,6 +390,7 @@ SKIP_INSTALL=false
 DEBUG_MODE=false
 KEEP_LOGS=false
 SETUP_CDP=false
+SKIP_COOKIES=false
 for arg in "$@"; do
     case "$arg" in
         --fresh)      FRESH_RUN=true ;;
@@ -397,6 +398,7 @@ for arg in "$@"; do
         --debug)      DEBUG_MODE=true; set -x ;;
         --keep-logs)  KEEP_LOGS=true ;;
         --setup-cdp)  SETUP_CDP=true ;;
+        --no-cookies) SKIP_COOKIES=true ;;
     esac
 done
 
@@ -675,18 +677,12 @@ cleanup_temp_files() {
         "$SCRIPT_DIR/npm_install.log"
         "/tmp/npm_install.log"
         "$TEMP/.1sh_extract.ps1"
-        "$SCRIPT_DIR/cookies.txt"
-        "$SCRIPT_DIR/server/cookies.txt"
     )
     for f in "${files[@]}"; do
         [ -e "$f" ] && rm -f "$f" 2>/dev/null && removed=$((removed + 1))
     done
     for pattern in \
         "$SCRIPT_DIR/.runtool."*".out" \
-        "$SCRIPT_DIR/cookies.txt.bak."* \
-        "$SCRIPT_DIR/cookies.txt.backup."* \
-        "$SCRIPT_DIR/server/cookies.txt.bak."* \
-        "$SCRIPT_DIR/server/cookies.txt.backup."* \
         "$SCRIPT_DIR/server.js.backup."* \
         "$SCRIPT_DIR/server.js.bak."* \
         "$SCRIPT_DIR/server/server.js.backup."* \
@@ -1823,12 +1819,22 @@ start_server() {
     [ -n "$FF_BIN" ] && { export PATH="$(dirname "$FF_BIN"):$PATH"; log "FFmpeg dir added to PATH"; }
 
     cd "$SCRIPT_DIR" || { error "Cannot cd to project root"; return 1; }
-    [ ! -d "node_modules/express" ] && {
-        warn "express missing - npm install..."
+        if [ ! -d "node_modules/express" ]; then
+        warn "express missing - installing express directly..."
         local NPM_BIN; NPM_BIN=$(resolve_real_binary "npm") || true
-        [ -n "$NPM_BIN" ] && RUN_TIMEOUT_SECONDS=600 RUN_TIMEOUT_RETRIES=1 RUN_TIMEOUT_HARD_CAP=20 \
-            run_with_timeout "run_native_binary \"$NPM_BIN\" install --no-audit --no-fund"
-    }
+        if [ -n "$NPM_BIN" ]; then
+            RUN_TIMEOUT_SECONDS=600 RUN_TIMEOUT_RETRIES=1 RUN_TIMEOUT_HARD_CAP=20 \
+                run_with_timeout "run_native_binary \"$NPM_BIN\" install --no-audit --no-fund" || true
+            if [ ! -d "node_modules/express" ]; then
+                RUN_TIMEOUT_SECONDS=600 RUN_TIMEOUT_RETRIES=1 RUN_TIMEOUT_HARD_CAP=20 \
+                    run_with_timeout "run_native_binary \"$NPM_BIN\" install express --no-audit --no-fund --save" || true
+            fi
+        fi
+        if [ ! -d "node_modules/express" ]; then
+            error "express is still missing after install attempts."
+            return 1
+        fi
+    fi
 
     # =====================================================================
     # ??? Launch Node so that:
@@ -1943,13 +1949,46 @@ main() {
     BROWSER=$(detect_browser) || BROWSER="edge"
     log "Detected browser: $BROWSER"
     test_cookies "$BROWSER"
-    export_cookies_with_fallbacks "$BROWSER"
+        # ---- cookie extraction prompt -------------------------------------
+    if [ "$SKIP_COOKIES" = true ]; then
+        warn "--no-cookies: skipping cookie extraction."
+        export COOKIES_EXPORTED=false
+    elif [ -t 0 ]; then
+        echo ""
+        echo "============================================================"
+        echo "  Extract cookies from your browser now?"
+        echo "============================================================"
+        echo ""
+        echo "  Y or Enter : extract cookies (needed for private/age-restricted"
+        echo "               videos and for signed-in-only playlists)"
+        echo "  N          : skip extraction and continue without cookies"
+        echo ""
+        printf "Extract cookies? [Y/n]: "
+        read -r COOKIE_CHOICE
+        case "$COOKIE_CHOICE" in
+            n|N|no|NO|No)
+                warn "Skipping cookie extraction."
+                export COOKIES_EXPORTED=false
+                ;;
+            *)
+                export_cookies_with_fallbacks "$BROWSER"
+                ;;
+        esac
+    else
+        # Non-interactive (stdin not a TTY)  don't prompt, just extract
+        export_cookies_with_fallbacks "$BROWSER"
+    fi
 
     install_npm_dependencies
     patch_server
     copy_modified_files
 
-    if start_server; then
+        if [ ! -d "$SCRIPT_DIR/node_modules/express" ]; then
+        error "PREFLIGHT FAILED: node_modules/express missing. Run: npm install express"
+        return 1
+    fi
+
+if start_server; then
         open_browser
         echo ""
         echo "+==============================================================+"

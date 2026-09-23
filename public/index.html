@@ -3585,7 +3585,14 @@
             let grandTotalDownloads = 0;
             let grandTotalQueue = 0;
 
-            channels.forEach(channel => {
+                        // ALPHA: sort channels alphabetically by display name (case-insensitive)
+            channels.sort((a, b) => {
+                const ka = (a.handle || a.name || '').toLowerCase();
+                const kb = (b.handle || b.name || '').toLowerCase();
+                return ka.localeCompare(kb);
+            });
+
+channels.forEach(channel => {
                 const channelVideos = channel.videos || (channel.data && channel.data.videos) || [];
                 channelVideos.forEach(v => {
                     if (v.downloadStatus === 'completed' || v.downloadStatus === 'skipped' || v.syncStatus === 'downloaded') {
@@ -4013,6 +4020,7 @@
             }
 
             _downloadAllChannelsInProgress = true;
+            try {
             showAlert(`⬇️ Queuing remaining videos across all channels...`, 'info', 5000);
             addLogEntry(`⬇️ Starting download for all unsynced/remaining videos in all channels`, 'info');
             
@@ -4105,7 +4113,9 @@
             }
 
             // ⭐ Release the guard so the user can click "Download All Channels" again later
-            _downloadAllChannelsInProgress = false;
+            } finally {
+                _downloadAllChannelsInProgress = false;
+            }
         }
         
         /**
@@ -4888,6 +4898,13 @@
                 return;
             }
 
+            // FIX: Precompute video -> original index map once (O(n)).
+            // Previously videos.indexOf(video) inside .map() was O(n) per call,
+            // making the whole render O(n^2) -- ~3.8M comparisons for the
+            // largest channel (1,950 videos).
+            const indexByRef = new Map();
+            videos.forEach((v, i) => indexByRef.set(v, i));
+
             // Group by sync status if we have sync data
             if (syncData && currentSyncFilter === 'all') {
                 const downloaded = videosToRender.filter(v =>
@@ -4901,22 +4918,22 @@
                 
                 if (downloaded.length > 0) {
                     html += `<div class="sync-section-header downloaded-section">✅ Downloaded (${downloaded.length})</div>`;
-                    html += downloaded.map((video) => renderVideoItem(video, videos.indexOf(video))).join('');
+                    html += downloaded.map((video) => renderVideoItem(video, indexByRef.get(video))).join('');
                 }
                 
                 if (newVideos.length > 0) {
                     html += `<div class="sync-section-header new-section">🔴 New/Remaining (${newVideos.length})</div>`;
-                    html += newVideos.map((video) => renderVideoItem(video, videos.indexOf(video))).join('');
+                    html += newVideos.map((video) => renderVideoItem(video, indexByRef.get(video))).join('');
                 }
 
                 if (!html) {
-                    html = videosToRender.map((video) => renderVideoItem(video, videos.indexOf(video))).join('');
+                    html = videosToRender.map((video) => renderVideoItem(video, indexByRef.get(video))).join('');
                 }
                 
                 container.innerHTML = html;
             } else {
                 container.innerHTML = videosToRender.map((video) =>
-                    renderVideoItem(video, videos.indexOf(video))
+                    renderVideoItem(video, indexByRef.get(video))
                 ).join('');
             }
         }
@@ -6165,6 +6182,7 @@
                 return;
             }
             _downloadSelectedInProgress = true;
+            try {
 
             const selection = getActiveSelection();
             if (selection.size === 0) {
@@ -6236,8 +6254,9 @@
 
             startPolling();
 
-            // ⭐ Release the guard so the user can click "Download Selected" again later
-            _downloadSelectedInProgress = false;
+            } finally {
+                _downloadSelectedInProgress = false;
+            }
         }
 
         let _downloadAllInProgress = false;   // ⭐ Module-level flag to prevent concurrent downloadAll() calls
@@ -6251,6 +6270,7 @@
                 return;
             }
             _downloadAllInProgress = true;
+            try {
 
             const btn = document.getElementById('downloadAllBtn');
             btn.disabled = true;
@@ -6324,8 +6344,9 @@
                 showAlert(`⚠️ ${errorCount} videos failed to queue`, 'warning');
             }
 
-            // ⭐ Release the guard so the user can click "Download All" again later
-            _downloadAllInProgress = false;
+            } finally {
+                _downloadAllInProgress = false;
+            }
         }
 
         function clearCompleted() {
@@ -6431,9 +6452,18 @@
                 }
 
                 if (completedItems.length !== lastCompletedCount) {
+                    const delta = completedItems.length - lastCompletedCount;
                     lastCompletedCount = completedItems.length;
-                    if (completedItems.length > 0 && currentChannel) {
-                        syncDownloadStatus().catch(err => console.warn('[QueueSync] Sync error:', err));
+                    // FIX: Only re-sync after N completions (default 5) and
+                    // only the current channel -- previously this triggered a
+                    // full 43-channel sync on every single completion, causing
+                    // constant background DB churn during active downloads.
+                    if (delta > 0) {
+                        _completionsSinceSync = (_completionsSinceSync || 0) + delta;
+                        if (_completionsSinceSync >= 5 && currentChannel) {
+                            _completionsSinceSync = 0;
+                            syncDownloadStatus().catch(err => console.warn('[QueueSync] Sync error:', err));
+                        }
                     }
                 }
             } catch (error) {
@@ -6839,7 +6869,19 @@
         
         function saveChannels() {
             try {
-                localStorage.setItem('ytl_channels', JSON.stringify(channels));
+                                // FIX: Only store slim metadata. Storing the full `videos`
+                // array for 43 channels exceeds the 5 MB localStorage quota
+                // and silently throws QuotaExceededError. Full video data
+                // is always available from the API on load.
+                const slim = channels.map(ch => ({
+                    id:         ch.id,
+                    name:       ch.name,
+                    url:        ch.url,
+                    handle:     ch.handle,
+                    youtubeId:  ch.youtubeId,
+                    videoCount: ch.videoCount
+                }));
+                localStorage.setItem('ytl_channels', JSON.stringify(slim));;
                 if (activeChannelId) {
                     localStorage.setItem('ytl_active_channel', activeChannelId);
                 }
